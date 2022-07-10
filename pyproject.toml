@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jamly-audio-sep"
+version = "0.0.1"
+description = "Split YouTube tracks into drums and drumless practice audio with Demucs and ffmpeg."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+keywords = ["audio", "demucs", "drums", "yt-dlp"]
+dependencies = [
+    "demucs>=3.0.6,<4",
+    "yt-dlp>=2022.6.29",
+]
+
+[project.scripts]
+jamly = "jamly.run:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+.venv/
+venv/
+output/
+*.mp3
+*.wav
+jamly_queue.json
