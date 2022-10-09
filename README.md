@@ -14,4 +14,4 @@ pip install -e .
 jamly -i "https://youtu.be/dQw4w9WgXcQ" -o ./output
 ```
 
-Outputs `drums.mp3` and `no_drums.mp3` at 320 kbps (`libmp3lame`).
+Outputs `drums.mp3` and `no_drums.mp3` at 320 kbps (`libmp3lame`). Playlists and live streams are rejected.
