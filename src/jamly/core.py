@@ -62,7 +62,7 @@ def build_ytdlp_extract_cmd(
     ]
     if ffmpeg_dir:
         cmd += ["--ffmpeg-location", ffmpeg_dir]
-    return cmd + ["-o", output_template, url]
+    return cmd + ["-o", output_template, "--", url]
 
 
 def build_demucs_cmd(
@@ -104,13 +104,7 @@ def sanitize_filename(name: str) -> str:
     cleaned = " ".join("".join(
         char for char in name if ord(char) >= 32 and char not in ':*?"<>|'
     ).split()).strip(" .")
-    reserved = {"CON", "PRN", "AUX", "NUL"} | {
-        "%s%d" % (prefix, number)
-        for prefix in ("COM", "LPT") for number in range(1, 10)
-    }
-    if cleaned.split(".", 1)[0].upper() in reserved:
-        cleaned = "_" + cleaned
-    return cleaned.encode("utf-8")[:180].decode("utf-8", "ignore").rstrip(" .") or "untitled"
+    return cleaned[:180].rstrip(" .") or "untitled"
 
 
 def separate_stems(audio: str, workdir: str, threads: int = 0,
