@@ -1,3 +1,3 @@
-"""Local drum and drumless practice track splitter."""
+"""Local stem and practice-track audio exports."""
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
