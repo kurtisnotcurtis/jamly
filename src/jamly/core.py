@@ -1,17 +1,33 @@
-"""Subprocess and filename helpers for yt-dlp, Demucs v3, and ffmpeg."""
+"""Subprocess and filename helpers shared by the pipeline and service."""
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
+import importlib.util
 import os
 from pathlib import Path
-import shutil
+import signal
 import subprocess
 import sys
+import threading
+import time
 from typing import Sequence
 
-ENGINE_MDX = "mdx_extra_q"
+from .models import DEFAULT_MODEL, model_stems, validate_model
+from .runtime import module_command
+
+PLATFORM_WINDOWS = os.name == "nt"
+ENGINE_HTDEMUCS = "htdemucs"
 FORMAT_WAV = "wav"
 FORMAT_MP3 = "mp3"
+
+
+def _abs(path: str) -> str:
+    return os.path.abspath(os.path.expanduser(os.path.expandvars(path)))
+
+
+def command_prefix(command: str | Sequence[str]) -> list[str]:
+    return [command] if isinstance(command, str) else list(command)
 
 
 @dataclass
@@ -26,26 +42,108 @@ class RunResult:
         return self.returncode == 0
 
 
-def run(args: Sequence[str], check: bool = False) -> RunResult:
-    cmd = [str(arg) for arg in args]
+def check_cancelled(cancel_event: threading.Event | None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise InterruptedError("Processing was cancelled")
+
+
+def _terminate(process: subprocess.Popen) -> None:
+    if PLATFORM_WINDOWS:
+        taskkill = str(Path(os.environ["SystemRoot"]) / "System32" / "taskkill.exe")
+        subprocess.run([taskkill, "/PID", str(process.pid), "/T", "/F"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
     try:
-        proc = subprocess.run(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        if PLATFORM_WINDOWS:
+            process.kill()
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        process.wait()
+
+
+def run(args: Sequence[str], check: bool = False, capture: bool = True,
+        stream: bool = False, on_line=None, cancel_event=None,
+        timeout: float | None = None, env=None) -> RunResult:
+    """Run an argument list; cancellation terminates only this command's process tree."""
+    cmd = [str(arg) for arg in args]
+    check_cancelled(cancel_event)
+    try:
+        process = subprocess.Popen(
+            cmd, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE if capture or stream else None,
+            stderr=subprocess.STDOUT if stream else subprocess.PIPE if capture else None,
+            text=True, encoding="utf-8", errors="replace",
+            env=env,
+            start_new_session=not PLATFORM_WINDOWS,
+            creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW)
+                          if PLATFORM_WINDOWS else 0,
         )
     except FileNotFoundError:
         return RunResult(cmd, -1, "", "NOT FOUND: %s" % cmd[0])
-    result = RunResult(cmd, proc.returncode, proc.stdout or "", proc.stderr or "")
-    if check and not result.ok:
-        raise RuntimeError("command failed (exit %d): %s" % (
-            result.returncode, result.stderr.strip() or cmd[0]))
-    return result
+    start = time.monotonic()
+    errors = []
+    tail = deque(maxlen=30)
+    reader = None
+
+    def pump():
+        try:
+            for line in process.stdout:
+                tail.append(line)
+                if not line.startswith("JAMLY_PROGRESS:"):
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                if on_line is not None:
+                    on_line(line)
+        except Exception as exc:
+            errors.append(exc)
+
+    try:
+        if stream:
+            reader = threading.Thread(target=pump, daemon=True)
+            reader.start()
+        while True:
+            check_cancelled(cancel_event)
+            if timeout is not None and time.monotonic() - start > timeout:
+                raise TimeoutError("Command exceeded %.0f seconds: %s" % (timeout, cmd[0]))
+            if errors:
+                raise errors[0]
+            try:
+                if stream:
+                    process.wait(timeout=0.1)
+                    reader.join(timeout=3)
+                    if reader.is_alive():
+                        raise RuntimeError("Command output did not close")
+                    if errors:
+                        raise errors[0]
+                    stdout, stderr = "", "".join(tail) if process.returncode else ""
+                else:
+                    stdout, stderr = process.communicate(timeout=0.1)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        result = RunResult(cmd, process.returncode, stdout or "", stderr or "")
+        if check and not result.ok:
+            raise RuntimeError("command failed (exit %d): %s" % (
+                result.returncode, result.stderr.strip() or cmd[0]))
+        return result
+    except BaseException:
+        _terminate(process)
+        raise
+    finally:
+        if reader is not None:
+            reader.join(timeout=3)
+        for pipe in (process.stdout, process.stderr):
+            if pipe is not None:
+                pipe.close()
 
 
 def build_ytdlp_extract_cmd(
@@ -54,49 +152,24 @@ def build_ytdlp_extract_cmd(
     output_template: str = "%(title)s.%(ext)s",
     ffmpeg_dir: str = "",
 ) -> list[str]:
-    prefix = [ytdlp_exe] if isinstance(ytdlp_exe, str) else list(ytdlp_exe)
-    cmd = prefix + [
-        "--ignore-config", "--no-playlist",
-        "-f", "bestaudio/best", "--extract-audio", "--audio-format", "wav",
-        "--audio-quality", "0", "--newline",
-    ]
+    from .bootstrap import ytdlp_options
+    cmd = command_prefix(ytdlp_exe) + ytdlp_options()
+    cmd += ["-f", "bestaudio/best", "--extract-audio", "--audio-format", "best",
+            "--audio-quality", "0", "--newline", "--no-write-thumbnail",
+            "--no-write-info-json", "--max-downloads", "1"]
     if ffmpeg_dir:
         cmd += ["--ffmpeg-location", ffmpeg_dir]
     return cmd + ["-o", output_template, "--", url]
 
 
-def build_demucs_cmd(
-    python_exe: str,
-    input_audio: str,
-    workdir: str,
-    model_name: str = ENGINE_MDX,
-    threads: int = 0,
-) -> list[str]:
-    cmd = [
-        python_exe, "-m", "demucs.separate",
-        "-n", model_name,
-        "--two-stems", "drums",
-        "-o", workdir,
-    ]
-    if threads:
-        cmd += ["-j", str(threads)]
-    return cmd + [input_audio]
-
-
-def build_stem_encode_cmd(
-    ffmpeg_exe: str,
-    input_wav: str,
-    output_path: str,
-    fmt: str = FORMAT_MP3,
-) -> list[str] | None:
+def build_stem_encode_cmd(ffmpeg_exe: str, input_wav: str,
+                          output_path: str, fmt: str = FORMAT_MP3) -> list[str] | None:
     if fmt == FORMAT_WAV:
         return None
     if fmt != FORMAT_MP3:
         raise ValueError("Unsupported audio format: %s" % fmt)
-    return [
-        ffmpeg_exe, "-y", "-i", os.path.abspath(input_wav),
-        "-c:a", "libmp3lame", "-b:a", "320k", output_path,
-    ]
+    return [ffmpeg_exe, "-nostdin", "-y", "-i", _abs(input_wav),
+            "-c:a", "libmp3lame", "-b:a", "320k", output_path]
 
 
 def sanitize_filename(name: str) -> str:
@@ -104,20 +177,61 @@ def sanitize_filename(name: str) -> str:
     cleaned = " ".join("".join(
         char for char in name if ord(char) >= 32 and char not in ':*?"<>|'
     ).split()).strip(" .")
-    return cleaned[:180].rstrip(" .") or "untitled"
+    reserved = {"CON", "PRN", "AUX", "NUL"} | {
+        "%s%d" % (prefix, number)
+        for prefix in ("COM", "LPT") for number in range(1, 10)
+    }
+    if cleaned.split(".", 1)[0].upper() in reserved:
+        cleaned = "_" + cleaned
+    return cleaned.encode("utf-8")[:180].decode("utf-8", "ignore").rstrip(" .") or "untitled"
+
+
+def _module_available(name: str) -> bool:
+    return importlib.util.find_spec(name) is not None
+
+
+def detect_engine() -> str | None:
+    return ENGINE_HTDEMUCS if _module_available("demucs") else None
+
+
+def build_demucs_cmd(python_exe: str, input_audio: str, workdir: str,
+                     model_name: str = ENGINE_HTDEMUCS, threads: int = 0,
+                     device: str = "auto") -> list[str]:
+    cmd = module_command("jamly.demucs_worker", "--out", workdir, "-n", model_name,
+                         executable=None if python_exe == sys.executable else python_exe)
+    if threads:
+        cmd += ["-j", str(threads)]
+    return cmd + ["--device", device, input_audio]
 
 
 def separate_stems(audio: str, workdir: str, threads: int = 0,
-                   model: str = ENGINE_MDX) -> dict[str, str]:
-    cmd = build_demucs_cmd(sys.executable, audio, workdir, model_name=model, threads=threads)
-    result = run(cmd)
+                   device: str = "auto", cancel_event=None, ffmpeg_dir=None,
+                   model: str = DEFAULT_MODEL, on_progress=None) -> dict[str, str]:
+    validate_model(model)
+    if not detect_engine():
+        raise RuntimeError("demucs is missing; reinstall Jamly")
+    output = Path(workdir) / "stems"
+    cmd = build_demucs_cmd(sys.executable, audio, str(output),
+                           model_name=model, threads=threads, device=device)
+    environment = dict(os.environ)
+    if ffmpeg_dir:
+        environment["PATH"] = str(ffmpeg_dir) + os.pathsep + environment.get("PATH", "")
+
+    def handle_line(line: str) -> None:
+        if on_progress is not None and line.startswith("JAMLY_PROGRESS:"):
+            try:
+                on_progress(int(line.removeprefix("JAMLY_PROGRESS:").strip()))
+            except ValueError:
+                pass
+
+    run_kwargs = {"cancel_event": cancel_event, "env": environment}
+    if on_progress is not None:
+        run_kwargs.update(stream=True, on_line=handle_line)
+    result = run(cmd, **run_kwargs)
     if not result.ok:
         raise RuntimeError("Demucs failed: %s" % result.stderr.strip())
-    track_dir = Path(workdir) / model / Path(audio).stem
-    paths = {
-        "drums": str(track_dir / "drums.wav"),
-        "no_drums": str(track_dir / "no_drums.wav"),
-    }
-    if not all(Path(p).is_file() for p in paths.values()):
-        raise RuntimeError("Demucs did not produce drums.wav and no_drums.wav")
+    expected = model_stems(model)
+    paths = {name: str(output / (name + ".wav")) for name in expected}
+    if not all(Path(path).is_file() for path in paths.values()):
+        raise RuntimeError("Demucs did not produce all four stems")
     return paths
