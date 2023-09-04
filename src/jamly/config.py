@@ -142,6 +142,8 @@ def validate_preferences(data: dict) -> dict:
     result = dict(data)
     if "model" in data:
         validate_model(data["model"])
+    if "stem" in data:
+        validate_stem(data["stem"], data["model"] if "model" in data else None)
     if "audio_format" in data and data["audio_format"] not in ("mp3", "wav"):
         raise ValueError("audio_format must be mp3 or wav")
     if "output_dir" in data:
