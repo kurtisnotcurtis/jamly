@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Jamly</title>
+  <style>
+    body { width: 360px; margin: 12px; font: 14px/1.4 system-ui, sans-serif; color: #eee; background: #202124; }
+    h1 { font-size: 18px; margin: 0 0 8px; }
+    textarea { box-sizing: border-box; width: 100%; min-height: 64px; margin: 8px 0; }
+    button { cursor: pointer; margin: 3px 4px 3px 0; }
+    #connection, #counts { font-size: 12px; }
+    #error, .error { color: #ffaaaa; white-space: pre-wrap; overflow-wrap: anywhere; }
+    #jobs { list-style: none; padding: 0; max-height: 340px; overflow: auto; }
+    #jobs li { padding: 8px 0; border-top: 1px solid #555; overflow-wrap: anywhere; }
+    .job-status { font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Jamly</h1>
+  <div id="connection" role="status">Connecting...</div>
+  <button id="options">Pair / settings</button>
+  <button id="current">Use current page</button>
+  <label for="inputs">Individual media URLs or YouTube ids, one per line</label>
+  <textarea id="inputs"></textarea>
+  <label for="model">Separation preset</label>
+  <select id="model" aria-describedby="model-help"></select>
+  <div id="model-help"></div>
+  <label for="stem">Target stems</label>
+  <select id="stem"></select>
+  <label><input id="replace" type="checkbox"> Replace existing exports</label>
+  <button id="submit">Split drums</button>
+  <div id="error" role="alert"></div>
+  <div id="counts"></div>
+  <ul id="jobs"></ul>
+  <script src="jamly_popup.js"></script>
+</body>
+</html>

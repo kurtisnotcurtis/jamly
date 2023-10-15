@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Jamly pairing</title>
+  <style>
+    body { max-width: 520px; padding: 20px; font: 15px/1.5 system-ui, sans-serif; }
+    label { display: block; margin-top: 12px; }
+    input { width: 100%; box-sizing: border-box; padding: 8px; }
+    button { margin: 12px 8px 12px 0; }
+    #status { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Pair with the Jamly backend</h1>
+  <p>Start <code>jamly-server</code>, then run <code>jamly-service token</code>
+    in the same Jamly environment and paste the token below.</p>
+  <label for="url">Backend URL</label>
+  <input id="url" type="url" value="http://127.0.0.1:8765">
+  <label for="token">Pairing token</label>
+  <input id="token" type="password" autocomplete="off">
+  <button id="save">Save and check connection</button>
+  <p id="status" role="status"></p>
+  <script src="jamly_client.js"></script>
+  <script src="jamly_options.js"></script>
+</body>
+</html>
