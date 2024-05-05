@@ -61,7 +61,7 @@
     if (closed) return;
     try {
       const state = await request("/status");
-      if (state.api_version !== 1) throw new Error("Update the backend and userscript together.");
+      if (state.api_version !== 3) throw new Error("Update the backend and userscript together.");
       status.textContent = state.current
         ? "Jamly: " + state.current.stage
         : `Queued ${state.pending}; complete ${state.done}; failed ${state.failed}.`;

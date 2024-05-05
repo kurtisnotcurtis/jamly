@@ -317,7 +317,7 @@ class ItemServer:
                         })
                 jobs.append(record)
             return {
-                "api_version": 2, "pending": sum(item["status"] == "pending" for item in items),
+                "api_version": 3, "pending": sum(item["status"] == "pending" for item in items),
                 "done": len(self.queue.done_ids()), "failed": sum(item["status"] == "error" for item in items),
                 "total": len(items), "current": dict(self._current) if self._current else None,
                 "jobs": jobs, "error": self._error, "models": model_choices(),
@@ -488,14 +488,14 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
                 nonce = values.get("nonce", [""])[0]
                 if set(values) != {"nonce"} or not re.fullmatch(r"[a-f0-9]{64}", nonce):
                     raise ValueError("A 32-byte hexadecimal challenge is required")
-                self._json({"api_version": 2, "proof": pairing_proof(
+                self._json({"api_version": 3, "proof": pairing_proof(
                     self.app._token, nonce, self.app.base_url, Path(self.app.queue_path),
                 )})
             except ValueError as exc:
                 self._json({"error": str(exc)}, 400)
         elif url.path == "/healthz":
             self._json({"ok": not bool(self.app._error), "version": __version__,
-                        "api_version": 2, "authentication_required": True})
+                        "api_version": 3, "authentication_required": True})
         elif url.path in ("/status", "/items"):
             self._json(self.app.snapshot())
         elif url.path.startswith("/outputs/"):
@@ -561,9 +561,6 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
         path = parsed_url.path
         if path == "/app/session" or path.startswith("/app/download/"):
             self._companion_form(path)
-            return
-        if path == "/app/upload":
-            self._upload_local_file(parsed_url.query)
             return
         if not self._allowed_request():
             return

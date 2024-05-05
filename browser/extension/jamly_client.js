@@ -37,7 +37,7 @@
 
   async function status(config) {
     const result = await request(config, "/status");
-    if (result.api_version !== 2 || !Array.isArray(result.jobs)) {
+    if (result.api_version !== 3 || !Array.isArray(result.jobs)) {
       throw new Error("Backend and browser versions differ; update both Jamly components.");
     }
     return result;
