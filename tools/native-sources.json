@@ -1,0 +1,30 @@
+{
+  "ffmpeg": {
+    "version": "7.1.1",
+    "url": "https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz",
+    "sha256": "733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1",
+    "directory": "ffmpeg-7.1.1",
+    "license": "LGPL-3.0-or-later"
+  },
+  "lame": {
+    "version": "3.100",
+    "url": "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz",
+    "sha256": "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e",
+    "directory": "lame-3.100",
+    "license": "LGPL-2.0-or-later"
+  },
+  "openssl": {
+    "version": "3.4.1",
+    "url": "https://github.com/openssl/openssl/releases/download/openssl-3.4.1/openssl-3.4.1.tar.gz",
+    "sha256": "002a2d6b30b58bf4bea46c43bdd96365aaf8daa6c428782aa4feee06da197df3",
+    "directory": "openssl-3.4.1",
+    "license": "Apache-2.0"
+  },
+  "libsndfile": {
+    "version": "1.2.2",
+    "url": "https://github.com/libsndfile/libsndfile/releases/download/1.2.2/libsndfile-1.2.2.tar.xz",
+    "sha256": "3799ca9924d3125038880367bf1468e53a1b7e3686a934f098b7e1d286cdb80e",
+    "directory": "libsndfile-1.2.2",
+    "license": "LGPL-2.1-or-later"
+  }
+}
