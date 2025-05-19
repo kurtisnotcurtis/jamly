@@ -66,6 +66,14 @@ def download_source(name: str, cache: Path) -> Path:
     temporary = archive.with_suffix(archive.suffix + ".partial")
     for attempt in range(3):
         candidate_url = info["url"]
+        if attempt > 0 and "//downloads.sourceforge.net/project/" in candidate_url:
+            candidate_url = (
+                candidate_url.replace(
+                    "//downloads.sourceforge.net/project/",
+                    "//master.dl.sourceforge.net/project/",
+                )
+                + "?viasf=1"
+            )
         try:
             with urlopen(candidate_url, timeout=120) as response, temporary.open("wb") as file:
                 if urlsplit(response.url).scheme != "https":
