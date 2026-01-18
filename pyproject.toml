@@ -1,6 +1,6 @@
 # Jamly CLI, backend, and packaged browser integration.
 [build-system]
-requires = ["setuptools>=70", "wheel"]
+requires = ["setuptools>=75", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,16 +9,22 @@ version = "0.1.0"
 description = "Split media URLs into drums and drumless practice tracks locally with Demucs."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE.md"]
 keywords = ["audio", "demucs", "stem-separation", "yt-dlp"]
 dependencies = [
-    "demucs>=4.0.1,<5",
-    "filelock>=3.15",
+    "demucs>=4.1,<5",
+    "filelock>=3.16",
     "numpy>=1.26,<2",
     "platformdirs>=4",
-    "soundfile>=0.12",
-    "yt-dlp>=2024.8.6",
+    "soundfile>=0.13",
+    "yt-dlp>=2026.1.1",
 ]
+
+[project.urls]
+Homepage = "https://kurtisnotcurtis.github.io/jamly/"
+Repository = "https://github.com/kurtisnotcurtis/jamly"
+Releases = "https://github.com/kurtisnotcurtis/jamly/releases"
 
 [project.scripts]
 jamly = "jamly.run:main"
@@ -28,7 +34,11 @@ jamly-service = "jamly.service:main"
 jamly-companion = "jamly.companion:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["pytest>=8", "ruff>=0.14"]
+bundle = ["pyinstaller>=6.16,<7", "zstandard>=0.23"]
+
+[tool.uv.extra-build-dependencies]
+sphn = ["cmake==3.31.6"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

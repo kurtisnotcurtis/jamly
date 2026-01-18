@@ -214,6 +214,8 @@ def separate_stems(audio: str, workdir: str, threads: int = 0,
     cmd = build_demucs_cmd(sys.executable, audio, str(output),
                            model_name=model, threads=threads, device=device)
     environment = dict(os.environ)
+    environment["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+    environment["HF_HUB_DISABLE_TELEMETRY"] = "1"
     if ffmpeg_dir:
         environment["PATH"] = str(ffmpeg_dir) + os.pathsep + environment.get("PATH", "")
 
@@ -233,5 +235,6 @@ def separate_stems(audio: str, workdir: str, threads: int = 0,
     expected = model_stems(model)
     paths = {name: str(output / (name + ".wav")) for name in expected}
     if not all(Path(path).is_file() for path in paths.values()):
-        raise RuntimeError("Demucs did not produce all four stems")
+        count_word = "six" if len(expected) == 6 else "four"
+        raise RuntimeError("Demucs did not produce all %s stems" % count_word)
     return paths
