@@ -1,12 +1,12 @@
 # Jamly CLI, backend, and packaged browser integration.
 [build-system]
-requires = ["setuptools>=75", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "jamly-audio-sep"
 version = "0.1.0"
-description = "Split media URLs into drums and drumless practice tracks locally with Demucs."
+description = "Split media URLs or local audio into drums/drumless, karaoke, or multi-stem tracks locally with Demucs."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = "MIT"
@@ -18,7 +18,7 @@ dependencies = [
     "numpy>=1.26,<2",
     "platformdirs>=4",
     "soundfile>=0.13",
-    "yt-dlp>=2026.1.1",
+    "yt-dlp[default,deno]>=2026.10.26",
 ]
 
 [project.urls]

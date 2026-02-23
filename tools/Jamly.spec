@@ -12,7 +12,7 @@ suffix = ".exe" if sys.platform == "win32" else ""
 
 datas = collect_data_files("jamly") + collect_data_files("demucs", include_py_files=True)
 datas += collect_data_files("julius", include_py_files=True)
-datas += collect_data_files("yt_dlp")
+datas += collect_data_files("yt_dlp") + collect_data_files("yt_dlp_ejs")
 datas += copy_metadata("jamly-audio-sep", recursive=True)
 datas += [
     (str(staging / "notices"), "notices"),
@@ -27,6 +27,7 @@ hidden = [
     "jamly.bootstrap", "jamly.companion", "jamly.demucs_worker", "jamly.run", "jamly.server",
     "jamly.service", "demucs.htdemucs", "demucs.hf", "yt_dlp.__main__",
 ]
+hidden += collect_submodules("yt_dlp_ejs")
 a = Analysis(
     [str(root / "tools" / "desktop_entry.py")],
     pathex=[str(root / "src")],

@@ -64,8 +64,9 @@ def ytdlp_options() -> list[str]:
     deno = find_deno()
     if not deno.ok:
         raise RuntimeError("Deno is missing; reinstall Jamly with its yt-dlp[deno] dependency")
-    return ["--ignore-config", "--no-playlist", "--no-write-subs",
-            "--socket-timeout", "30", "--retries", "3"]
+    return ["--ignore-config", "--js-runtimes", "deno:" + deno.path,
+            "--no-playlist", "--no-write-subs", "--socket-timeout", "30",
+            "--retries", "3"]
 
 
 def _dir_has_both(root: str) -> bool:
