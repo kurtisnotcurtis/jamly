@@ -1,0 +1,38 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "setup",
+            "type": "process",
+            "command": "uv",
+            "args": ["sync", "--locked"],
+            "options": {"cwd": "${workspaceFolder}"},
+            "problemMatcher": []
+        },
+        {
+            "label": "pytest",
+            "type": "process",
+            "command": "uv",
+            "args": ["run", "--locked", "pytest"],
+            "options": {"cwd": "${workspaceFolder}"},
+            "group": "test",
+            "problemMatcher": []
+        },
+        {
+            "label": "lint",
+            "type": "process",
+            "command": "uv",
+            "args": ["run", "--locked", "ruff", "check", "."],
+            "options": {"cwd": "${workspaceFolder}"},
+            "problemMatcher": []
+        },
+        {
+            "label": "run-server",
+            "type": "process",
+            "command": "uv",
+            "args": ["run", "--locked", "jamly-server"],
+            "options": {"cwd": "${workspaceFolder}"},
+            "problemMatcher": []
+        }
+    ]
+}

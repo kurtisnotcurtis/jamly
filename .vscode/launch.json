@@ -1,0 +1,44 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "pytest-debug",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "-s",
+                "tests"
+            ],
+            "justMyCode": true,
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "setup",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "unittest-debug",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "unittest",
+            "args": [
+                "discover",
+                "-s",
+                "tests"
+            ],
+            "justMyCode": true,
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "setup",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "run-server",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "jamly.server",
+            "justMyCode": false,
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "setup",
+            "console": "integratedTerminal"
+        }
+    ]
+}
