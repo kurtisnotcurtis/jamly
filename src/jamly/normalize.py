@@ -3,10 +3,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import os
+from pathlib import Path
 import re
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.request import url2pathname
 
 WATCH_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+LOCAL_AUDIO_EXTENSIONS = {
+    ".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".opus", ".wma", ".aiff", ".aif", ".alac",
+}
+_WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
 class InputError(ValueError):
@@ -45,12 +52,54 @@ def extract_watch_id(input_text: str | None) -> str:
     return candidate
 
 
+def local_audio_path(input_text: str | None) -> Path | None:
+    if not isinstance(input_text, str) or not input_text.strip():
+        return None
+    source = input_text.strip()
+    if any(ord(char) < 32 for char in source):
+        return None
+    if source.lower().startswith("file://"):
+        parsed = urlsplit(source)
+        if parsed.netloc and parsed.netloc.lower() != "localhost":
+            raise InputError("Remote file:// hosts are not supported")
+        if parsed.query or parsed.fragment or not parsed.path:
+            raise InputError("Invalid file:// URI")
+        raw_path = url2pathname(unquote(parsed.path))
+        return Path(raw_path).expanduser().resolve()
+    if "://" in source or is_valid_watch_id(source):
+        return None
+    try:
+        extract_watch_id(source)
+        return None
+    except InputError:
+        pass
+    is_explicit_path = (
+        bool(_WINDOWS_DRIVE_RE.match(source))
+        or source.startswith(("/", "./", "../", "~/", ".\\", "..\\", "~\\"))
+        or "\\" in source
+    )
+    suffix = Path(source).suffix.lower()
+    is_audio_filename = (
+        suffix in LOCAL_AUDIO_EXTENSIONS
+        and not source.lower().startswith("ytsearch")
+        and "/" not in source
+    )
+    if is_explicit_path or is_audio_filename:
+        return Path(source).expanduser().resolve()
+    return None
+
+
 def make_input(input_text: str | None) -> Input:
     if not isinstance(input_text, str) or not input_text.strip():
         raise InputError("Expected a non-empty source string")
     source = input_text.strip()
     if any(ord(char) < 32 for char in source):
         raise InputError("A source must not contain control characters")
+    local_path = local_audio_path(source)
+    if local_path is not None:
+        normalized = os.path.normcase(str(local_path))
+        wid = "file-" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+        return Input(wid, str(local_path))
     try:
         wid = extract_watch_id(source)
     except InputError:
