@@ -32,10 +32,16 @@
       <form id="split-form">
         <label for="inputs">Individual media URLs, YouTube ids, or local audio file paths (one per line)</label>
         <textarea id="inputs" rows="3" placeholder="Paste an individual track URL or local file path"></textarea>
+        <label for="files">Or choose local audio files from your computer</label>
+        <input id="files" type="file" accept="audio/*,.wav,.mp3,.flac,.m4a,.ogg,.opus,.aac,.aiff,.aif,.wma" multiple>
         <div class="settings">
           <div>
             <label for="model">Separation preset</label>
             <select id="model" aria-describedby="model-help"></select>
+          </div>
+          <div>
+            <label for="stem">Target stems</label>
+            <select id="stem"></select>
           </div>
           <div>
             <label for="format">Export format</label>

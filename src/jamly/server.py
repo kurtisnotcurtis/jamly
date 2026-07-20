@@ -562,6 +562,9 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
         if path == "/app/session" or path.startswith("/app/download/"):
             self._companion_form(path)
             return
+        if path == "/app/upload":
+            self._upload_local_file(parsed_url.query)
+            return
         if not self._allowed_request():
             return
         try:
