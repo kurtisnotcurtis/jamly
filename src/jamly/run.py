@@ -255,8 +255,12 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
             ffprobe = str(Path(ffmpeg_dir) / ("ffprobe.exe" if os.name == "nt" else "ffprobe"))
             if not detect_engine():
                 raise RuntimeError("Demucs is missing; reinstall Jamly")
-            command = ytdlp_command()
-            metadata = _fetch_item_metadata(command, source, cancel_event)
+            local_source = local_audio_path(source)
+            if local_source is not None:
+                metadata = _fetch_local_metadata(ffprobe, local_source, cancel_event)
+            else:
+                command = ytdlp_command()
+                metadata = _fetch_item_metadata(command, source, cancel_event)
             result.title = metadata.get("title") or wid
             parsed = parse_title_artist(metadata.get("title"))
             if not parsed and metadata.get("artist") and metadata.get("title"):

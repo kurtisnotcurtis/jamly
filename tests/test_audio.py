@@ -71,3 +71,16 @@ class PairTests(unittest.TestCase):
         np.testing.assert_allclose(drums[:, 0], self.wave * .2, atol=2e-7)
         np.testing.assert_allclose(backing[:, 0], self.wave * .6, atol=2e-7)
 
+    def test_karaoke_vocals_pair_and_all_stems_share_gain_staging(self):
+        vocals_out = {name: self.root / ("vocals-out-" + name + ".wav") for name in ("vocals", "no_vocals")}
+        info = render_pair(self.stems, self.root, vocals_out, "wav", "", target_stem="vocals")
+        vocals, _ = sf.read(vocals_out["vocals"], always_2d=True)
+        karaoke, _ = sf.read(vocals_out["no_vocals"], always_2d=True)
+        np.testing.assert_allclose(vocals[:, 0], self.wave * .55 * info["gain"], atol=2e-6)
+        np.testing.assert_allclose(karaoke[:, 0], self.wave * 1.4 * info["gain"], atol=2e-6)
+
+        all_out = {name: self.root / ("all-out-" + name + ".wav") for name in self.stems}
+        all_info = render_pair(self.stems, self.root, all_out, "wav", "", target_stem="all")
+        self.assertEqual(all_info["gain"], 1.0)
+        for name in self.stems:
+            self.assertTrue(all_out[name].is_file())

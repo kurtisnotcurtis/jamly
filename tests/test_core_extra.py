@@ -51,6 +51,8 @@ class DemucsContractTests(unittest.TestCase):
             with patch.object(core, "run", return_value=core.RunResult([], 0, "", "")):
                 with self.assertRaisesRegex(RuntimeError, "all four stems"):
                     core.separate_stems("audio.wav", directory)
+                with self.assertRaisesRegex(RuntimeError, "all six stems"):
+                    core.separate_stems("audio.wav", directory, model="htdemucs_6s")
 
     def test_six_stem_preset_and_progress_reporting(self):
         raw = torch.tensor([[0.2, -0.2], [0.1, -0.1]])

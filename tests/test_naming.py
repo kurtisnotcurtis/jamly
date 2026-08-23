@@ -85,6 +85,11 @@ class StemDestinationPathsNamedTests(unittest.TestCase):
             self.assertEqual(destinations["drums"].name, "Band - Song [vid1]_drums.mp3")
             self.assertEqual(destinations["no_drums"].name, "Band - Song [vid1]_no_drums.mp3")
             self.assertEqual(meta.name, "metadata.json")
+            ft_dest, _ = run_mod.stem_destination_paths(
+                out, "vid1", "wav", parsed=("Band", "Song"), model="htdemucs_ft", stem="vocals"
+            )
+            self.assertEqual(ft_dest["vocals"].name, "Band - Song [vid1] [htdemucs_ft]_vocals.wav")
+            self.assertEqual(ft_dest["no_vocals"].name, "Band - Song [vid1] [htdemucs_ft]_no_vocals.wav")
         finally:
             shutil.rmtree(out, ignore_errors=True)
 
