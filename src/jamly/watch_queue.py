@@ -164,6 +164,25 @@ class WatchQueue:
                     item["title"] = title
                 if generation is not None:
                     item["generation"] = generation
+                if status in ("done", "skipped") and item.get("outputs") and item.get("generation"):
+                    opts = item.get("options") or {}
+                    model = opts.get("model", "htdemucs")
+                    stem = opts.get("stem", "drums")
+                    audio_format = opts.get("audio_format", "mp3")
+                    exports = dict(item.get("exports") or {})
+                    export_key = (
+                        "%s/%s" % (model, audio_format)
+                        if stem == "drums"
+                        else "%s/%s/%s" % (model, stem, audio_format)
+                    )
+                    exports[export_key] = {
+                        "model": model,
+                        "stem": stem,
+                        "audio_format": audio_format,
+                        "outputs": dict(item["outputs"]),
+                        "generation": item["generation"],
+                    }
+                    item["exports"] = exports
                 return
         raise QueueError("Unknown job: %s" % watch_id)
 

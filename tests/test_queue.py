@@ -156,6 +156,8 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(record["options"]["output_dir"], "/second")
         self.assertEqual(record["options"]["audio_format"], "wav")
         self.assertEqual(record["options"]["model"], "htdemucs_6s")
+        self.assertIn("htdemucs/mp3", record["exports"])
+        self.assertEqual(record["exports"]["htdemucs/mp3"]["generation"], "gen-1")
 
     def test_interrupted_running_job_is_resumed(self):
         with tempfile.TemporaryDirectory() as root:
