@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,14 @@ const root = await fs.mkdtemp(path.join(os.tmpdir(), "jamly-browser-"));
 const python = process.env.JAMLY_PYTHON || path.resolve(
   process.platform === "win32" ? ".venv/Scripts/python.exe" : ".venv/bin/python"
 );
+
+function cleanup(dir) {
+  const path_ = dir.endsWith("/") ? dir : dir + "/";
+  if (!fsSync.existsSync(path_)) return;
+  try { fsSync.rmSync(path_, { recursive: true, force: true }); }
+  catch (e) { console.debug("cleanup skipped", e.code === "EBUSY" ? "locked" : e.message); }
+}
+
 const runtimeIndex = process.argv.indexOf("--runtime");
 const runtime = runtimeIndex < 0 ? null : path.resolve(process.argv[runtimeIndex + 1]);
 const chromePath = process.env.CHROME_BIN || ({
@@ -233,6 +242,6 @@ try {
       name => name.startsWith("server-") && name.endsWith(".json")
     ), "backend shutdown");
   }
-  await new Promise(resolve => media.close(resolve));
-  await fs.rm(root, { recursive: true, force: true });
+  if (runtime) { try { fs.unlinkSync(runtime); } catch (_) {} }
+  await cleanup(root);
 }

@@ -63,6 +63,7 @@ jobs:
           install: >-
             make
             perl
+            perl-locale-maketext-simple
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-pkgconf
       - run: uv sync --locked --group bundle --managed-python --python 3.12

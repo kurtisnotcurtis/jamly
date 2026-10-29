@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 import platform
 import shlex
@@ -14,6 +15,7 @@ import sys
 import tarfile
 from urllib.parse import urlsplit
 from urllib.request import urlopen
+from urllib.error import URLError
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES_FILE = Path(__file__).with_name("native-sources.json")
@@ -43,11 +45,22 @@ def download_source(name: str, cache: Path) -> Path:
             raise RuntimeError("Cached source checksum mismatch: " + str(archive))
         return archive
     temporary = archive.with_suffix(archive.suffix + ".partial")
+    for attempt in range(3):
+        try:
+            with urlopen(info["url"], timeout=120) as response, temporary.open("wb") as file:
+                if urlsplit(response.url).scheme != "https":
+                    raise RuntimeError("Refusing an insecure source download")
+                shutil.copyfileobj(response, file)
+            break
+        except (URLError, TimeoutError) as err:
+            # Retry on transient network errors: connection reset or timeout.
+            is_transient = (
+                isinstance(err, URLError) and "Connection reset" in str(err)
+            ) or isinstance(err, TimeoutError)
+            if not (attempt + 1 < 3 and is_transient):
+                raise
+            time.sleep(2 ** attempt)
     try:
-        with urlopen(info["url"], timeout=120) as response, temporary.open("wb") as file:
-            if urlsplit(response.url).scheme != "https":
-                raise RuntimeError("Refusing an insecure source download")
-            shutil.copyfileobj(response, file)
         if checksum(temporary) != info["sha256"]:
             raise RuntimeError("Source checksum mismatch: " + info["url"])
         temporary.replace(archive)
@@ -131,9 +144,12 @@ def build(work: Path, jobs: int = 4) -> Path:
     parallel = "-j%d" % max(1, jobs)
 
     print("Building pinned audio dependencies for " + platform_key, flush=True)
+    if os.name == "nt":
+        subprocess.run([str(Path(sys.base_prefix) / "pip.exe"), "install", "--quiet",
+                        'Locale.Maketext.Simple'], check=True)
     directory = source / SOURCES["openssl"]["directory"]
     execute(["perl", "Configure", openssl_target, "no-shared", "no-tests", "no-module",
-             "--prefix=" + root, "--libdir=lib"], directory)
+             "--prefix=" + root, "--libdir=lib",], directory)
     execute(["make", parallel], directory)
     execute(["make", "install_sw"], directory)
 
