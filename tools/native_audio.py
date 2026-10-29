@@ -52,8 +52,14 @@ def download_source(name: str, cache: Path) -> Path:
                     raise RuntimeError("Refusing an insecure source download")
                 shutil.copyfileobj(response, file)
             break
-        except URLError as err:
-            if not (attempt + 1 < 3 and "Connection reset" in str(err)):
+        except (URLError, TimeoutError) as err:
+            # Retry on transient network errors: connection reset or timeout.
+            msg = str(err).lower()
+            is_transient = (
+                isinstance(err, URLError)
+                and any(kw in msg for kw in ("connection reset", "timed out"))
+            ) or isinstance(err, TimeoutError)
+            if not (attempt + 1 < 3 and is_transient):
                 raise
             time.sleep(2 ** attempt)
     try:
