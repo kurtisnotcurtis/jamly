@@ -51,11 +51,17 @@ def download_source(name: str, cache: Path) -> Path:
                 if urlsplit(response.url).scheme != "https":
                     raise RuntimeError("Refusing an insecure source download")
                 shutil.copyfileobj(response, file)
-            return
+            break
         except URLError as err:
             if not (attempt + 1 < 3 and "Connection reset" in str(err)):
                 raise
             time.sleep(2 ** attempt)
+    try:
+        if checksum(temporary) != info["sha256"]:
+            raise RuntimeError("Source checksum mismatch: " + info["url"])
+        temporary.replace(archive)
+    finally:
+        temporary.unlink(missing_ok=True)
     return archive
 
 
