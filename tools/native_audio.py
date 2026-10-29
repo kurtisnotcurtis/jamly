@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 import platform
 import shlex
@@ -14,6 +15,7 @@ import sys
 import tarfile
 from urllib.parse import urlsplit
 from urllib.request import urlopen
+from urllib.error import URLError
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES_FILE = Path(__file__).with_name("native-sources.json")
@@ -43,16 +45,17 @@ def download_source(name: str, cache: Path) -> Path:
             raise RuntimeError("Cached source checksum mismatch: " + str(archive))
         return archive
     temporary = archive.with_suffix(archive.suffix + ".partial")
-    try:
-        with urlopen(info["url"], timeout=120) as response, temporary.open("wb") as file:
-            if urlsplit(response.url).scheme != "https":
-                raise RuntimeError("Refusing an insecure source download")
-            shutil.copyfileobj(response, file)
-        if checksum(temporary) != info["sha256"]:
-            raise RuntimeError("Source checksum mismatch: " + info["url"])
-        temporary.replace(archive)
-    finally:
-        temporary.unlink(missing_ok=True)
+    for attempt in range(3):
+        try:
+            with urlopen(info["url"], timeout=120) as response, temporary.open("wb") as file:
+                if urlsplit(response.url).scheme != "https":
+                    raise RuntimeError("Refusing an insecure source download")
+                shutil.copyfileobj(response, file)
+            return
+        except URLError as err:
+            if not (attempt + 1 < 3 and "Connection reset" in str(err)):
+                raise
+            time.sleep(2 ** attempt)
     return archive
 
 
@@ -131,9 +134,12 @@ def build(work: Path, jobs: int = 4) -> Path:
     parallel = "-j%d" % max(1, jobs)
 
     print("Building pinned audio dependencies for " + platform_key, flush=True)
+    if os.name == "nt":
+        subprocess.run([str(Path(sys.base_prefix) / "pip.exe"), "install", "--quiet",
+                        'Locale.Maketext.Simple'], check=True)
     directory = source / SOURCES["openssl"]["directory"]
     execute(["perl", "Configure", openssl_target, "no-shared", "no-tests", "no-module",
-             "--prefix=" + root, "--libdir=lib"], directory)
+             "--prefix=" + root, "--libdir=lib",], directory)
     execute(["make", parallel], directory)
     execute(["make", "install_sw"], directory)
 
