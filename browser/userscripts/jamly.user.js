@@ -1,203 +1,90 @@
-/* jamly status UI userscript.
-
-   Shows live progress from a running `python -m jamly.server` (GET /status SSE) in a floating
-   panel, and alerts when items finish with links back to the source URL. Zero-install: install
-   via Tampermonkey/Greasemonkey (or your userscript manager), then run the server on another tab.
-   The queue file is read/written locally so it survives across sessions and can be loaded by
-   `python -m jamly.server` as its resume source.
-
-   Protocol shared with the WebExtension background variant (jamly_client.js):
-     GET  /status -> {pending, done, total, current, last_completed}
-     POST /add    body {"inputs":[...], "titles":[...]} -> {queued, newly_added, pending_count}
-     GET  /items  -> {pending:[], done:[]}
-     GET  /healthz-> {ok:true,...}
-*/
 // ==UserScript==
-// @name         jamly status UI
-// @namespace    https://example.com/jamly
-// @version      1.0.0
-// @description  Live queue progress + completion alerts for the jamly HTTP status server.
-// @author       jamly
-// @match        *://*/*
-// @grant        GM_addStyle
+// @name         Jamly status helper
+// @namespace    https://github.com/kurtisnotcurtis/jamly
+// @version      0.3.0
+// @description  Optional status/enqueue helper for a paired local Jamly backend.
+// @match        https://www.youtube.com/*
+// @match        https://music.youtube.com/*
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
+// @connect      127.0.0.1
+// @connect      localhost
 // @run-at       document-end
 // ==/UserScript==
 
 (function () {
   "use strict";
-
-  var POLL_INTERVAL_MS = 1000;   // poll /status every second (server emits ~once/sec)
-  var SERVER_URL = "http://127.0.0.1:8765"; // where `python -m jamly.server` is listening
-  var QUEUE_PATH = ""; // "" -> derive from env AUTOCV_QUEUE or <cwd>/jamly_queue.json
-
-  // --- styling (GM_addStyle; no CSS file dependency) -------------------------------------------
-  if (typeof GM_addStyle === "function") {
-    GM_addStyle(
-      "#ac-panel{position:fixed;top:12px;right:12px;width:320px;background:#1e1e1e;color:#e6e6e6;" +
-        "border:1px solid #0078d4;border-radius:8px;font:13px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;box-shadow:0 4px 20px rgba(0,0,0,.5);z-index:2147483647;user-select:none}" +
-        "#ac-panel .ac-head{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#252526;border-bottom:1px solid #333}" +
-        "#ac-title{font-weight:600;color:#4fc3f7}" +
-        "#ac-close{cursor:pointer;color:#9aa;font-weight:bold}" +
-        "#ac-body{padding:8px 10px;max-height:520px;overflow:auto}" +
-        "#ac-counts{font-size:11px;color:#888;margin-bottom:6px}" +
-        "#ac-status{color:#ffd54f;font-weight:600;min-height:1.5em}" +
-        "#ac-current-title{color:#fff;font-size:13px;word-break:break-all;margin:2px 0 6px}" +
-        "#ac-list{list-style:none;margin:0;padding:0;max-height:240px;overflow:auto}" +
-        "#ac-list li{padding:4px 6px;border-bottom:1px solid #333;display:flex;align-items:center;gap:6px}" +
-        "#ac-list .ac-done{color:#4caf50}#ac-list .ac-pending{color:#bbb}" +
-        "#ac-empty{color:#777;font-style:italic}"
-    );
-  }
-
-  var panel = document.createElement("div");
-  panel.id = "ac-panel";
-  // create every element the render functions below write to (#ac-counts / #ac-status /
-  // #ac-current-title / #ac-list); the panel used to build only #ac-body, so those writes hit a
-  // null node and threw. Build them here so the first poll paints without error.
-  panel.innerHTML =
-    '<div class="ac-head"><span id="ac-title">jamly</span><span id="ac-close" title="close">×</span></div>' +
-    '<div id="ac-body">' +
-      '<div id="ac-counts"></div>' +
-      '<div id="ac-status"></div>' +
-      '<div id="ac-current-title"></div>' +
-      '<ul id="ac-list"></ul>' +
-    '</div>';
+  let closed = false;
+  let timer;
+  const panel = document.createElement("aside");
+  panel.style.cssText = "position:fixed;right:12px;bottom:12px;z-index:2147483647;background:#202124;color:white;padding:12px;font:14px system-ui;max-width:320px";
+  const status = document.createElement("div");
+  const split = document.createElement("button");
+  const close = document.createElement("button");
+  split.textContent = "Split this page";
+  close.textContent = "Close";
+  panel.append(status, split, close);
   document.body.appendChild(panel);
-  var closeBtn = panel.querySelector("#ac-close");
-  if (closeBtn) closeBtn.addEventListener("click", function () { panel.remove(); });
 
-  // --- helpers ---------------------------------------------------------------------------------
-  function counts(body) {
-    var pending = body.pending, done = body.done;
-    return pending == null ? 0 : Math.max(0, pending), done == null ? 0 : Math.max(0, done);
-  }
+  GM_registerMenuCommand("Pair Jamly", () => {
+    const token = window.prompt("Paste the token printed by jamly-service token:");
+    if (token) GM_setValue("token", token.trim());
+  });
 
-  function renderCounts(pending, done) {
-    document.querySelector("#ac-counts").textContent =
-      "pending: " + pending + "   ·   done: " + done;
-  }
-
-  function renderStatus(current) {
-    var el = document.querySelector("#ac-status");
-    if (!current || current.status === "idle") {
-      el.textContent = "server idle — nothing running";
-      return false;
-    }
-    el.textContent = "[" + (current.stage || "?") + "] " + (current.status || "?").toUpperCase();
-    var titleEl = document.querySelector("#ac-current-title");
-    if (titleEl) titleEl.textContent = current.title ? current.title : "";
-    return true;
-  }
-
-  function renderList(last_completed, inputs, done_ids) {
-    var list = document.querySelector("#ac-list");
-    // pending items (from the queue file) with a clickable link back to their source URL
-    if (!inputs || !inputs.length) {
-      if (last_completed && last_completed.length) {
-        renderCompleted(last_completed);
-        return;
-      }
-      list.innerHTML = '<li id="ac-empty">no items yet</li>';
-      return;
-    }
-    var done = done_ids || [];
-    var rows = inputs.map(function (u, i) {
-      var state = done.indexOf(u) >= 0 ? "done" : "pending";
-      return '<li class="ac-' + state + '" title="open source"><a href="' + escapeAttr(u) + '" target="_blank" style="color:inherit;text-decoration:none">● ' + escapeHtml(u) + '</a></li>';
-    }).join("");
-    // surface terminal records from the server too (done/error), appended after pending rows
-    if (last_completed && last_completed.length) {
-      rows += renderCompleted(last_completed);
-    }
-    list.innerHTML = rows || '<li id="ac-empty">no items yet</li>';
-  }
-
-  function renderCompleted(last_completed) {
-    var out = "";
-    for (var i = 0; i < last_completed.length; i++) {
-      var rec = last_completed[i];
-      if (!rec || !rec.watch_id) continue;
-      var cls = rec.status === "done" ? "ac-done" : "ac-pending";
-      var mark = rec.status === "done" ? "✔" : "✗";
-      var label = rec.title ? escapeHtml(rec.title) : rec.watch_id;
-      out += '<li class="' + cls + '">' + mark + ' ' + label + '</li>';
-    }
-    return out;
-  }
-
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  function request(path, body) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        url: "http://127.0.0.1:8765" + path,
+        method: body === undefined ? "GET" : "POST",
+        headers: {
+          Authorization: "Bearer " + GM_getValue("token", ""),
+          "Content-Type": "application/json",
+        },
+        data: body === undefined ? undefined : JSON.stringify(body),
+        timeout: 10000,
+        onload: response => {
+          try {
+            const value = JSON.parse(response.responseText);
+            if (response.status < 200 || response.status >= 300) throw new Error(value.error);
+            resolve(value);
+          } catch (error) { reject(error); }
+        },
+        onerror: () => reject(new Error("Cannot reach Jamly. Start jamly-server.")),
+        ontimeout: () => reject(new Error("Jamly request timed out.")),
+      });
     });
   }
-  function escapeAttr(s) { return escapeHtml(s); }
 
-  // --- queue file read/write (local resume source; server owns durable state) ------------------
-  async function loadQueue() {
-    if (!QUEUE_PATH) return {};
-    try {
-      var base = "file://";
-      var url = QUEUE_PATH.replace(/^\/+/, "");
-      var resp = await fetch(base + url, { cache: "no-store" });
-      var txt = await resp.text();
-      if (!txt || !txt.trim()) return {};
-      try { return JSON.parse(txt); } catch (e) { return {}; }
-    } catch (e) { /* derive from env / cwd */ }
-    try {
-      var p = process.env.AUTOCV_QUEUE || (process.cwd ? require("path").join(process.cwd(), "jamly_queue.json") : "");
-      if (!p) return {};
-      var fs = await import("node:fs/promises");
-      let txt;
-      try { txt = await fs.readFile(p, "utf8"); } catch (e2) { return {}; }
-      if (!txt || !txt.trim()) return {};
-      return JSON.parse(txt);
-    } catch (e) { return {}; }
-  }
-
-  // Read a SINGLE SSE event from the stream (bounded). The server streams /status forever, so an
-  // unbounded read (resp.text()) never resolves and would hang this poll; instead we drain the
-  // reader until the first event terminator ("\n\n"), with a hard timeout cap so a stalled socket
-  // can never block the UI. (Fix for the "waits for a status response that never ends" bug.)
-  async function readOneEvent(resp, timeoutMs) {
-    var reader = resp.body.getReader();
-    var decoder = new TextDecoder();
-    var acc = "";
-    var deadline = Date.now() + timeoutMs;
-    try {
-      while (Date.now() < deadline) {
-        var chunk = await reader.read();
-        if (chunk.done) break;
-        acc += decoder.decode(chunk.value, { stream: true });
-        var end = acc.indexOf("\n\n");
-        if (end !== -1) { acc = acc.slice(0, end); break; }
-      }
-    } finally {
-      try { reader.cancel(); } catch (e) { /* already released */ }
-    }
-    return acc;
-  }
-
-  // --- poll loop -------------------------------------------------------------------------------
   async function poll() {
+    if (closed) return;
     try {
-      var resp = await fetch(SERVER_URL + "/status", { cache: "no-store" });
-      if (!resp.ok) return;
-      // read only the first event (bounded), not the whole never-ending SSE stream
-      var txt = await readOneEvent(resp, 5000);
-      var m = txt.match(/\{[\s\S]*\}/); // outermost JSON object (server writes data:{...} ticks)
-      if (!m) return;
-      var body = JSON.parse(m[0]);
-      renderCounts(counts(body), counts(body));
-      renderStatus(body.current);
-      renderList(body.last_completed || [], null, body.done);
-    } catch (e) { /* transient — next poll will retry */ }
+      const state = await request("/status");
+      if (state.api_version !== 3) throw new Error("Update the backend and userscript together.");
+      status.textContent = state.current
+        ? "Jamly: " + state.current.stage
+        : `Queued ${state.pending}; complete ${state.done}; failed ${state.failed}.`;
+      status.textContent += " Use the Jamly extension to download or retry results.";
+    } catch (error) {
+      status.textContent = error.message || String(error);
+    } finally {
+      if (!closed) timer = setTimeout(poll, 3000);
+    }
   }
-
-  async function start() {
-    var inputs = await loadQueue(); // source URLs for completion links
-    setInterval(poll, POLL_INTERVAL_MS);   // unref-like via daemon below when in a service worker; harmless here
-    poll();                                 // immediate first paint
-  }
-
-  if (typeof document !== "undefined") start();
+  split.addEventListener("click", async () => {
+    try {
+      split.disabled = true;
+      const response = await request("/add", { inputs: [location.href] });
+      status.textContent = `Queued ${response.newly_added} job(s).`;
+    } catch (error) {
+      status.textContent = error.message || String(error);
+    } finally { split.disabled = false; }
+  });
+  close.addEventListener("click", () => {
+    closed = true;
+    clearTimeout(timer);
+    panel.remove();
+  });
+  poll();
 })();

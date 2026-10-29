@@ -1,12 +1,8 @@
 """Unit tests for naming.py's pure title-parse + stem-naming helpers."""
 import os
 import shutil
-import sys
 import tempfile
 import unittest
-
-# src-layout shim (both runners): put ``src`` on sys.path before the absolute-package import.
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
 from jamly.naming import (
     build_metadata_name,
@@ -93,7 +89,7 @@ class BuildMetadataNameTests(unittest.TestCase):
 
 
 class MetaDictTests(unittest.TestCase):
-    """Structured sidecar payload (ASCII keys/values; always records watch id + source)."""
+    """Source metadata remains traceable when title fields are unavailable."""
 
     def test_parses_recorded_fields(self):
         d = meta_dict(watch_id="vid1", source_url="https://youtu.be/vid1", title="A - B", artist="A")
@@ -118,11 +114,21 @@ class StemOutputPathsNamedTests(unittest.TestCase):
         out = tempfile.mkdtemp()
         try:
             drums, nodrums, meta = run_mod.stem_output_paths(out, "vid1", "mp3", parsed=("Band", "Song"))
-            self.assertEqual(os.path.basename(drums), "Band - Song_drums.mp3")
-            self.assertEqual(os.path.basename(nodrums), "Band - Song_no_drums.mp3")
-            self.assertEqual(os.path.basename(meta), "vid1.meta.json")
+            self.assertEqual(os.path.basename(drums), "Band - Song [vid1]_drums.mp3")
+            self.assertEqual(os.path.basename(nodrums), "Band - Song [vid1]_no_drums.mp3")
+            self.assertEqual(os.path.basename(meta), "metadata.json")
         finally:
             shutil.rmtree(out, ignore_errors=True)
+
+    def test_long_title_never_truncates_stable_id(self):
+        drums, nodrums, _meta = run_mod.stem_output_paths(
+            "/out",
+            "dQw4w9WgXcQ",
+            "wav",
+            parsed=("A" * 120, "B" * 120),
+        )
+        self.assertIn("[dQw4w9WgXcQ]", os.path.basename(drums))
+        self.assertIn("[dQw4w9WgXcQ]", os.path.basename(nodrums))
 
 
 if __name__ == "__main__":

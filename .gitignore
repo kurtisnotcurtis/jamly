@@ -11,6 +11,10 @@ portable/
 Thumbs.db
 .venv-audio-sep/
 .venv/
+.venv-bundle/
 *.egg-info/
 *.log
 jamly_queue.json
+build/
+dist/
+*.lock.tmp
