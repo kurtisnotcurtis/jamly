@@ -53,16 +53,31 @@ def python_notices(destination: Path) -> None:
     archive = cache / name
     if not archive.exists():
         partial = archive.with_suffix(".partial")
+        for attempt in range(3):
+            try:
+                with urlopen(url, timeout=120) as response, partial.open("wb") as file:
+                    shutil.copyfileobj(response, file)
+                break  # download succeeded
+            except (URLError, TimeoutError) as err:
+                msg = str(err).lower()
+                is_transient = (
+                    isinstance(err, URLError)
+                    and any(kw in msg for kw in ("connection reset", "timed out"))
+                ) or isinstance(err, TimeoutError)
+                if not (attempt + 1 < 3 and is_transient):
+                    raise
+                time.sleep(2 ** attempt)
+        # Download succeeded — verify checksum and promote to final file
         try:
-            with urlopen(url, timeout=120) as response, partial.open("wb") as file:
-                shutil.copyfileobj(response, file)
             if checksum(partial) != digest:
                 raise RuntimeError("Python notice archive checksum mismatch")
             partial.replace(archive)
         finally:
             partial.unlink(missing_ok=True)
-    if checksum(archive) != digest:
-        raise RuntimeError("Cached Python notice archive checksum mismatch")
+    else:
+        # Already cached — re-verify checksum
+        if checksum(archive) != digest:
+            raise RuntimeError("Cached Python notice archive checksum mismatch")
     import zstandard
     copied = 0
     destination.mkdir(parents=True, exist_ok=True)
