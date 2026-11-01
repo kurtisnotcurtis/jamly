@@ -159,9 +159,6 @@ def build(work: Path, jobs: int = 4) -> Path:
     parallel = "-j%d" % max(1, jobs)
 
     print("Building pinned audio dependencies for " + platform_key, flush=True)
-    if os.name == "nt":
-        subprocess.run([str(Path(sys.base_prefix) / "pip.exe"), "install", "--quiet",
-                        'Locale.Maketext.Simple'], check=True)
     directory = source / SOURCES["openssl"]["directory"]
     execute(["perl", "Configure", openssl_target, "no-shared", "no-tests", "no-module",
              "--prefix=" + root, "--libdir=lib",], directory)
