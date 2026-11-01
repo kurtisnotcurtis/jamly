@@ -12,13 +12,12 @@ import subprocess
 import sys
 import tarfile
 from urllib.parse import quote
-from urllib.request import urlopen
 import zipfile
 
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
-from native_audio import ROOT, SOURCES, SOURCES_FILE, build, checksum, download_source
+from native_audio import ROOT, SOURCES, SOURCES_FILE, build, checksum, download_source, download_with_retry
 
 
 def python_notices(destination: Path) -> None:
@@ -38,8 +37,12 @@ def python_notices(destination: Path) -> None:
     triple = triples[(sys.platform, platform.machine().lower())]
     prefix = "cpython-%s+%s-%s-" % (platform.python_version(), release, triple)
     base = "https://github.com/astral-sh/python-build-standalone/releases/download/" + release
-    with urlopen(base + "/SHA256SUMS", timeout=60) as response:
-        sums = [line.split(maxsplit=1) for line in response.read().decode().splitlines() if line.strip()]
+    cache = ROOT / "build" / "python-notices"
+    cache.mkdir(parents=True, exist_ok=True)
+    sums_path = cache / (release + "-SHA256SUMS")
+    if not sums_path.exists():
+        download_with_retry(base + "/SHA256SUMS", sums_path, timeout=60)
+    sums = [line.split(maxsplit=1) for line in sums_path.read_text().splitlines() if line.strip()]
     matches = [(digest, name.lstrip("*")) for digest, name in sums
                if name.lstrip("*").startswith(prefix) and name.endswith("-full.tar.zst") and "pgo" in name]
     if len(matches) != 1:
@@ -47,33 +50,13 @@ def python_notices(destination: Path) -> None:
     digest, name = matches[0]
     if len(digest) != 64:
         raise RuntimeError("The Python release does not provide a SHA-256 digest")
-    cache = ROOT / "build" / "python-notices"
-    cache.mkdir(parents=True, exist_ok=True)
     url = base + "/" + quote(name, safe="")
     archive = cache / name
     if not archive.exists():
-        partial = archive.with_suffix(".partial")
-        for attempt in range(3):
-            try:
-                with urlopen(url, timeout=120) as response, partial.open("wb") as file:
-                    shutil.copyfileobj(response, file)
-                break  # download succeeded
-            except (URLError, TimeoutError) as err:
-                msg = str(err).lower()
-                is_transient = (
-                    isinstance(err, URLError)
-                    and any(kw in msg for kw in ("connection reset", "timed out"))
-                ) or isinstance(err, TimeoutError)
-                if not (attempt + 1 < 3 and is_transient):
-                    raise
-                time.sleep(2 ** attempt)
-        # Download succeeded — verify checksum and promote to final file
-        try:
-            if checksum(partial) != digest:
-                raise RuntimeError("Python notice archive checksum mismatch")
-            partial.replace(archive)
-        finally:
-            partial.unlink(missing_ok=True)
+        download_with_retry(url, archive)
+        # Verify checksum after download
+        if checksum(archive) != digest:
+            raise RuntimeError("Python notice archive checksum mismatch")
     else:
         # Already cached — re-verify checksum
         if checksum(archive) != digest:

@@ -36,39 +36,63 @@ def checksum(path: Path) -> str:
     return digest.hexdigest()
 
 
+def download_with_retry(url: str, destination: Path, timeout: int = 120, max_attempts: int = 3) -> None:
+    """Download a URL with retry on transient network errors.
+
+    Retries on any URLError, TimeoutError, OSError (including socket.timeout and
+    WinError 10060), with exponential backoff. Logs each attempt.
+    """
+    temporary = destination.with_suffix(destination.suffix + ".partial")
+    for attempt in range(1, max_attempts + 1):
+        try:
+            print("Downloading %s (attempt %d/%d)..." % (url, attempt, max_attempts), flush=True)
+            with urlopen(url, timeout=timeout) as response, temporary.open("wb") as file:
+                if urlsplit(response.url).scheme != "https":
+                    raise RuntimeError("Refusing an insecure source download")
+                shutil.copyfileobj(response, file)
+            print("Download complete: %s" % url, flush=True)
+            break
+        except (URLError, TimeoutError, OSError) as err:
+            if attempt == max_attempts:
+                raise
+            print("Download attempt %d failed: %s — retrying in %d seconds" % (attempt, err, 2 ** (attempt - 1)), flush=True)
+            time.sleep(2 ** (attempt - 1))
+    try:
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def download_source(name: str, cache: Path) -> Path:
     info = SOURCES[name]
-    archive = cache / Path(urlsplit(info["url"]).path).name
+    if "mirrors" in info:
+        mirrors = info["mirrors"]
+    else:
+        mirrors = [info["url"]]
+    archive_name = Path(mirrors[-1]).name  # Use upstream URL to derive filename
+    archive = cache / archive_name
     cache.mkdir(parents=True, exist_ok=True)
     if archive.exists():
         if checksum(archive) != info["sha256"]:
             raise RuntimeError("Cached source checksum mismatch: " + str(archive))
         return archive
-    temporary = archive.with_suffix(archive.suffix + ".partial")
-    for attempt in range(3):
+    
+    errors = []
+    for url in mirrors:
         try:
-            with urlopen(info["url"], timeout=120) as response, temporary.open("wb") as file:
-                if urlsplit(response.url).scheme != "https":
-                    raise RuntimeError("Refusing an insecure source download")
-                shutil.copyfileobj(response, file)
-            break
-        except (URLError, TimeoutError) as err:
-            # Retry on transient network errors: connection reset or timeout.
-            msg = str(err).lower()
-            is_transient = (
-                isinstance(err, URLError)
-                and any(kw in msg for kw in ("connection reset", "timed out"))
-            ) or isinstance(err, TimeoutError)
-            if not (attempt + 1 < 3 and is_transient):
-                raise
-            time.sleep(2 ** attempt)
-    try:
-        if checksum(temporary) != info["sha256"]:
-            raise RuntimeError("Source checksum mismatch: " + info["url"])
-        temporary.replace(archive)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return archive
+            download_with_retry(url, archive)
+            if checksum(archive) != info["sha256"]:
+                raise RuntimeError("Source checksum mismatch: " + url)
+            print("Downloaded %s from: %s" % (name, url), flush=True)
+            return archive
+        except (RuntimeError, URLError, TimeoutError, OSError) as err:
+            errors.append((url, str(err)))
+            print("Failed to download %s from %s: %s" % (name, url, err), flush=True)
+            archive.unlink(missing_ok=True)
+    
+    raise RuntimeError("All download sources failed for %s: %s" % (
+        name, "; ".join("%s (%s)" % (url, err) for url, err in errors)
+    ))
 
 
 def build(work: Path, jobs: int = 4) -> Path:
