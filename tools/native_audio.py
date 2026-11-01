@@ -36,6 +36,24 @@ def checksum(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _is_transient_network_error(err: Exception) -> bool:
+    """True for transient network errors worth retrying a source download.
+
+    urllib wraps OSError (including socket timeouts) in URLError, so the
+    wrapped reason must be inspected rather than the outer exception type.
+    """
+    reason = err.reason if isinstance(err, URLError) else err
+    return isinstance(
+        reason,
+        (
+            TimeoutError,
+            ConnectionResetError,
+            ConnectionAbortedError,
+            BrokenPipeError,
+        ),
+    )
+
+
 def download_source(name: str, cache: Path) -> Path:
     info = SOURCES[name]
     archive = cache / Path(urlsplit(info["url"]).path).name
@@ -53,11 +71,8 @@ def download_source(name: str, cache: Path) -> Path:
                 shutil.copyfileobj(response, file)
             break
         except (URLError, TimeoutError) as err:
-            # Retry on transient network errors: connection reset or timeout.
-            is_transient = (
-                isinstance(err, URLError) and "Connection reset" in str(err)
-            ) or isinstance(err, TimeoutError)
-            if not (attempt + 1 < 3 and is_transient):
+            # Retry on transient network errors: timeouts and connection resets.
+            if not (attempt + 1 < 3 and _is_transient_network_error(err)):
                 raise
             time.sleep(2 ** attempt)
     try:
