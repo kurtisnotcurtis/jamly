@@ -259,6 +259,7 @@ try {
       name => name.startsWith("server-") && name.endsWith(".json")
     ), "backend shutdown");
   }
-  if (runtime) { try { fs.unlinkSync(runtime); } catch (_) {} }
+  media.closeAllConnections();
+  await new Promise((resolve) => media.close(resolve));
   await cleanup(root);
 }
