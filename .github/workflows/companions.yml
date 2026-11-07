@@ -63,6 +63,7 @@ jobs:
           install: >-
             make
             perl
+            perl-locale-maketext-simple
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-pkgconf
       - run: uv sync --locked --group bundle --managed-python --python 3.12
@@ -83,6 +84,7 @@ jobs:
         run: uv run --no-sync python tools/bundle_smoke.py --real-models
       - name: Real Chrome using the packaged companion
         if: runner.os == 'Linux'
+        timeout-minutes: 15
         run: node tools/browser_smoke.mjs --runtime dist/desktop/Jamly/jamly-runtime
       - name: Preserve completed native builds even if a later check fails
         if: always() && !cancelled() && steps.native-cache.outputs.cache-hit != 'true' && hashFiles('build/native-audio/built.json') != ''

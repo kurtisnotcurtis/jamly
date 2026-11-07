@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 import platform
 import shlex
@@ -14,6 +15,7 @@ import sys
 import tarfile
 from urllib.parse import urlsplit
 from urllib.request import urlopen
+from urllib.error import URLError
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES_FILE = Path(__file__).with_name("native-sources.json")
@@ -34,6 +36,24 @@ def checksum(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _is_transient_network_error(err: Exception) -> bool:
+    """True for transient network errors worth retrying a source download.
+
+    urllib wraps OSError (including socket timeouts) in URLError, so the
+    wrapped reason must be inspected rather than the outer exception type.
+    """
+    reason = err.reason if isinstance(err, URLError) else err
+    return isinstance(
+        reason,
+        (
+            TimeoutError,
+            ConnectionResetError,
+            ConnectionAbortedError,
+            BrokenPipeError,
+        ),
+    )
+
+
 def download_source(name: str, cache: Path) -> Path:
     info = SOURCES[name]
     archive = cache / Path(urlsplit(info["url"]).path).name
@@ -43,11 +63,19 @@ def download_source(name: str, cache: Path) -> Path:
             raise RuntimeError("Cached source checksum mismatch: " + str(archive))
         return archive
     temporary = archive.with_suffix(archive.suffix + ".partial")
+    for attempt in range(3):
+        try:
+            with urlopen(info["url"], timeout=120) as response, temporary.open("wb") as file:
+                if urlsplit(response.url).scheme != "https":
+                    raise RuntimeError("Refusing an insecure source download")
+                shutil.copyfileobj(response, file)
+            break
+        except (URLError, TimeoutError) as err:
+            # Retry on transient network errors: timeouts and connection resets.
+            if not (attempt + 1 < 3 and _is_transient_network_error(err)):
+                raise
+            time.sleep(2 ** attempt)
     try:
-        with urlopen(info["url"], timeout=120) as response, temporary.open("wb") as file:
-            if urlsplit(response.url).scheme != "https":
-                raise RuntimeError("Refusing an insecure source download")
-            shutil.copyfileobj(response, file)
         if checksum(temporary) != info["sha256"]:
             raise RuntimeError("Source checksum mismatch: " + info["url"])
         temporary.replace(archive)
@@ -133,7 +161,7 @@ def build(work: Path, jobs: int = 4) -> Path:
     print("Building pinned audio dependencies for " + platform_key, flush=True)
     directory = source / SOURCES["openssl"]["directory"]
     execute(["perl", "Configure", openssl_target, "no-shared", "no-tests", "no-module",
-             "--prefix=" + root, "--libdir=lib"], directory)
+             "--prefix=" + root, "--libdir=lib",], directory)
     execute(["make", parallel], directory)
     execute(["make", "install_sw"], directory)
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,14 @@ const root = await fs.mkdtemp(path.join(os.tmpdir(), "jamly-browser-"));
 const python = process.env.JAMLY_PYTHON || path.resolve(
   process.platform === "win32" ? ".venv/Scripts/python.exe" : ".venv/bin/python"
 );
+
+function cleanup(dir) {
+  const path_ = dir.endsWith("/") ? dir : dir + "/";
+  if (!fsSync.existsSync(path_)) return;
+  try { fsSync.rmSync(path_, { recursive: true, force: true }); }
+  catch (e) { console.debug("cleanup skipped", e.code === "EBUSY" ? "locked" : e.message); }
+}
+
 const runtimeIndex = process.argv.indexOf("--runtime");
 const runtime = runtimeIndex < 0 ? null : path.resolve(process.argv[runtimeIndex + 1]);
 const chromePath = process.env.CHROME_BIN || ({
@@ -18,12 +27,35 @@ const chromePath = process.env.CHROME_BIN || ({
   win32: path.join(process.env.PROGRAMFILES || "C:/Program Files", "Google/Chrome/Application/chrome.exe"),
 })[process.platform];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// Terminate a launched Chrome without ever hanging the caller. On POSIX systems
+// Chrome is spawned into its own process group (detached) so a single SIGTERM
+// can reach the renderer/helper children that would otherwise keep the main
+// process alive; Windows keeps its recursive taskkill. Bounded by a SIGKILL
+// fallback so cleanup can never hang the job forever.
+async function terminate(proc) {
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
+  const exited = once(proc, "exit");
+  const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch (_) {} }, 8000);
+  try {
+    if (process.platform === "win32") {
+      execFileSync(path.join(process.env.SystemRoot, "System32/taskkill.exe"),
+        ["/PID", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
+    } else {
+      try { process.kill(-proc.pid, "SIGTERM"); } catch (_) { proc.kill("SIGTERM"); }
+    }
+    await Promise.race([exited, sleep(8000)]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 let backend;
 let token;
 let chrome;
 let cdp;
 let browserLog = "";
 let chromeError;
+let spawned = false;
 let debugURL;
 
 async function command(executable, args) {
@@ -140,8 +172,9 @@ try {
   chrome = spawn(chromePath, [
     "--headless=new", "--remote-debugging-port=0", "--user-data-dir=" + profile,
     "--no-first-run", "--no-default-browser-check", "--disable-extensions", "about:blank",
-  ], { stdio: ["ignore", "ignore", "pipe"] });
+  ], { stdio: ["ignore", "ignore", "pipe"], detached: process.platform !== "win32" });
   chrome.stderr.on("data", data => { browserLog += data; });
+  chrome.on("spawn", () => { spawned = true; });
   chrome.on("error", error => { chromeError = error; });
   let port;
   await waitFor(async () => {
@@ -215,14 +248,7 @@ try {
   throw error;
 } finally {
   if (cdp) cdp.close();
-  if (chrome?.pid && chrome.exitCode === null && chrome.signalCode === null) {
-    const exited = once(chrome, "exit");
-    if (process.platform === "win32") {
-      execFileSync(path.join(process.env.SystemRoot, "System32/taskkill.exe"),
-        ["/PID", String(chrome.pid), "/T", "/F"], { stdio: "ignore" });
-    } else chrome.kill("SIGTERM");
-    await exited;
-  }
+  if (spawned) await terminate(chrome);
   if (backend && token) {
     const response = await fetch(backend + "/app/stop", {
       method: "POST", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
@@ -233,6 +259,7 @@ try {
       name => name.startsWith("server-") && name.endsWith(".json")
     ), "backend shutdown");
   }
-  await new Promise(resolve => media.close(resolve));
-  await fs.rm(root, { recursive: true, force: true });
+  media.closeAllConnections();
+  await new Promise((resolve) => media.close(resolve));
+  await cleanup(root);
 }
