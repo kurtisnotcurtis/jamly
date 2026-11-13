@@ -1,0 +1,69 @@
+# Jamly CLI, backend, and packaged browser integration.
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jamly-audio-sep"
+version = "0.1.0"
+description = "Split media URLs or local audio into drums/drumless, karaoke, or multi-stem tracks locally with Demucs."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = "MIT"
+license-files = ["LICENSE.md"]
+keywords = ["audio", "demucs", "stem-separation", "yt-dlp"]
+dependencies = [
+    "demucs>=4.1,<5",
+    "filelock>=3.16",
+    "numpy>=1.26,<2",
+    "platformdirs>=4",
+    "soundfile>=0.13",
+    "yt-dlp[default,deno]>=2026.10.26",
+]
+
+[project.urls]
+Homepage = "https://kurtisnotcurtis.github.io/jamly/"
+Repository = "https://github.com/kurtisnotcurtis/jamly"
+Releases = "https://github.com/kurtisnotcurtis/jamly/releases"
+
+[project.scripts]
+jamly = "jamly.run:main"
+jamly-server = "jamly.server:main"
+jamly-doctor = "jamly.bootstrap:main"
+jamly-service = "jamly.service:main"
+jamly-companion = "jamly.companion:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.14"]
+bundle = ["pyinstaller>=6.16,<7", "zstandard>=0.23"]
+
+[tool.uv.extra-build-dependencies]
+sphn = ["cmake==3.31.6"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+jamly = ["web/*.html", "web/*.js", "web/*.css"]
+
+[tool.setuptools.data-files]
+"share/jamly/browser/extension" = [
+    "browser/extension/manifest.json",
+    "browser/extension/jamly_client.js",
+    "browser/extension/jamly_extension_bg.js",
+    "browser/extension/jamly_options.html",
+    "browser/extension/jamly_options.js",
+    "browser/extension/jamly_popup.html",
+    "browser/extension/jamly_popup.js",
+]
+"share/jamly/browser/userscripts" = ["browser/userscripts/jamly.user.js"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E501", "W291", "W293"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

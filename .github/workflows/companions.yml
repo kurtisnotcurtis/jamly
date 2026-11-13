@@ -1,0 +1,174 @@
+name: Companion packages
+
+on:
+  push:
+    branches:
+      - "main"
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: companions-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            label: linux-x86_64
+          - os: windows-2022
+            label: windows-x86_64
+          - os: macos-15
+            label: macos-arm64
+          - os: macos-15-intel
+            label: macos-x86_64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+          python-version: "3.12"
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Linux'
+        with:
+          node-version: "24"
+      - name: Install native build tools on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y build-essential pkg-config perl
+      - name: Install native build tools on macOS
+        if: runner.os == 'macOS'
+        run: command -v pkg-config || brew install pkg-config
+      - name: Install native build tools on Windows
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e
+        with:
+          msystem: MINGW64
+          path-type: inherit
+          install: >-
+            make
+            perl
+            perl-locale-maketext-simple
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkgconf
+      - run: uv sync --locked --group bundle --managed-python --python 3.12
+      - name: Verify lockstep version metadata
+        run: |
+          if [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then
+            uv run --no-sync python tools/version.py --check --tag "${GITHUB_REF_NAME}"
+          else
+            uv run --no-sync python tools/version.py --check
+          fi
+      - name: Cache pinned native builds
+        id: native-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: build/native-audio
+          key: native-audio-${{ matrix.label }}-${{ hashFiles('tools/native_audio.py', 'tools/native-sources.json') }}
+      - name: Build companion on macOS or Linux
+        if: runner.os != 'Windows'
+        run: uv run --no-sync python tools/build_companion.py
+      - name: Build companion on Windows
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: uv run --no-sync python tools/build_companion.py
+      - name: Relocate and exercise the packaged runtime
+        run: uv run --no-sync python tools/bundle_smoke.py --real-models
+      - name: Real Chrome using the packaged companion
+        if: runner.os == 'Linux'
+        timeout-minutes: 15
+        run: node tools/browser_smoke.mjs --runtime dist/desktop/Jamly/jamly-runtime
+      - name: Preserve completed native builds even if a later check fails
+        if: always() && !cancelled() && steps.native-cache.outputs.cache-hit != 'true' && hashFiles('build/native-audio/built.json') != ''
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: build/native-audio
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+      - name: Upload unsigned preview and corresponding sources
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Jamly-${{ matrix.label }}
+          path: dist/companions/*
+          compression-level: 0
+          retention-days: 14
+      - name: Preserve build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: build-logs-${{ matrix.label }}
+          path: |
+            build/native-audio/build.log
+            build/pyinstaller/**/warn-*.txt
+          if-no-files-found: ignore
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release tag matches version metadata
+        run: python3 tools/version.py --check --tag "${GITHUB_REF_NAME}"
+      - name: Download companion artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: Jamly-*
+          path: dist/release
+          merge-multiple: true
+      - name: Package browser extension and consolidated checksums
+        run: |
+          VERSION="$(python3 tools/version.py --check --tag "${GITHUB_REF_NAME}")"
+          python3 - "$VERSION" <<'PY'
+          import hashlib
+          from pathlib import Path
+          import shutil
+          import sys
+          import zipfile
+
+          version = sys.argv[1]
+          release_dir = Path("dist/release")
+          release_dir.mkdir(parents=True, exist_ok=True)
+
+          ext_zip = release_dir / f"Jamly-{version}-browser-extension.zip"
+          with zipfile.ZipFile(ext_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+              for path in sorted(Path("browser/extension").iterdir()):
+                  if path.is_file() and not path.name.endswith("_test.js"):
+                      zf.write(path, path.name)
+
+          shutil.copyfile(
+              Path("browser/userscripts/jamly.user.js"),
+              release_dir / f"Jamly-{version}-jamly.user.js",
+          )
+
+          checksum_lines = []
+          for asset in sorted(release_dir.iterdir()):
+              if asset.is_file() and not asset.name.endswith(".sha256") and asset.name != "SHA256SUMS.txt":
+                  digest = hashlib.sha256(asset.read_bytes()).hexdigest()
+                  checksum_lines.append(f"{digest}  {asset.name}\n")
+          (release_dir / "SHA256SUMS.txt").write_text("".join(checksum_lines), encoding="utf-8")
+          PY
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/release/* --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/release/* \
+              --title "Jamly ${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi
