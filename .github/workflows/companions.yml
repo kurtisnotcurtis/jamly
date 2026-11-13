@@ -64,6 +64,15 @@ jobs:
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-pkgconf
       - run: uv sync --locked --group bundle --managed-python --python 3.12
+      - name: Use CPU-only PyTorch in the Linux companion bundle
+        if: runner.os == 'Linux'
+        run: |
+          TORCH_VERSION="$(uv run --no-sync python -c "import importlib.metadata; print(importlib.metadata.version('torch'))")"
+          NVIDIA_PKGS="$(uv run --no-sync python -c "import importlib.metadata as m; print(' '.join(sorted(d.metadata['Name'] for d in m.distributions() if d.metadata['Name'].startswith('nvidia-'))))")"
+          if [[ -n "${NVIDIA_PKGS}" ]]; then
+            uv pip uninstall ${NVIDIA_PKGS}
+          fi
+          uv pip install --no-deps --force-reinstall --index-url https://download.pytorch.org/whl/cpu "torch==${TORCH_VERSION}+cpu"
       - name: Verify lockstep version metadata
         run: |
           if [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then
