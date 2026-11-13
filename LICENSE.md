@@ -19,23 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-## Scope of this license
-
-This MIT license covers the original `jamly` application code (the CLI,
-HTTP status server, input queue, tool discovery/provisioning helpers and pure
-orchestration builders under `src/jamly/`) and the bundled browser
-extension + userscript assets.
-
-It does **not** cover third-party tools this project drives at runtime — each keeps
-its own license:
-
-- **Demucs / htdemucs** (Meta) — installed as a Python dependency and invoked with
-  `python -m demucs`; model weights are downloaded by Demucs and are not committed here.
-- **PyTorch** — installed transitively by Demucs.
-- **ffmpeg / ffprobe** (FFmpeg) — system tools invoked as subprocesses.
-- **yt-dlp** — installed as a Python dependency and invoked as a subprocess.
-
-If you redistribute our code, keep this LICENSE.md and the copyright notice above.

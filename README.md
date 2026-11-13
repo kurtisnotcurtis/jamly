@@ -233,4 +233,8 @@ See [DESIGN.md](DESIGN.md) for architecture, security boundaries, and release ve
 
 ---
 
+## License
+
+Jamly is licensed under the [MIT License](LICENSE.md), covering the `jamly` application code (`src/jamly/`) and browser extension/userscript assets (`browser/`). Third-party runtime dependencies—including Demucs (`htdemucs`), PyTorch, `ffmpeg`/`ffprobe`, `yt-dlp`, Deno, and bundled native libraries—retain their own licenses.
+
 *Only download or process media you are authorized to use, and follow the source site's terms of service.*
