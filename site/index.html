@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jamly — Local Drum &amp; Drumless Stem Exporter</title>
+  <meta name="description" content="Create sample-aligned drums and drumless practice tracks from media URLs or local audio files. Runs locally on your hardware with Demucs v4.">
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="script.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="container nav-row">
+      <a class="brand" href="#top" aria-label="Jamly Home">
+        <span class="brand-mark" aria-hidden="true">J</span>
+        <span class="brand-text">Jamly</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#workflows">How to Use</a>
+        <a href="#presets">Presets &amp; Audio</a>
+        <a href="#architecture">Security &amp; Design</a>
+        <a class="nav-cta" href="https://github.com/kurtisnotcurtis/jamly" target="_blank" rel="noopener">GitHub Repo</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="container hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">Local-First Audio Separation for Drummers</p>
+          <h1>Drums &amp; drumless tracks.<br>Separated on your machine.</h1>
+          <p class="lead">
+            Turn individual media URLs or local audio files into sample-aligned
+            <strong>drums</strong> and <strong>no_drums</strong> stems using Demucs v4.
+            No cloud subscriptions, no upload limits, and no per-stem normalization drift.
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="#workflows">Explore Workflows</a>
+            <a class="btn btn-secondary" href="https://github.com/kurtisnotcurtis/jamly/actions/workflows/companions.yml" target="_blank" rel="noopener">Desktop Builds</a>
+          </div>
+          <ul class="hero-badges" aria-label="Key capabilities">
+            <li>URLs + Local Audio Files</li>
+            <li>3 Curated Demucs Presets</li>
+            <li>320k MP3 &amp; Float32 WAV</li>
+            <li>macOS · Windows · Linux</li>
+          </ul>
+        </div>
+
+        <div class="hero-card" aria-label="Companion preview">
+          <div class="window-bar">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            <span class="window-title">Jamly Companion — 127.0.0.1:8765</span>
+          </div>
+          <div class="window-body">
+            <div class="mock-field">
+              <span class="mock-label">Input URLs, video IDs, or local audio files</span>
+              <code>https://youtu.be/dQw4w9WgXcQ<br>~/Music/Session_Take_04.wav</code>
+            </div>
+            <div class="mock-row">
+              <div class="mock-pill">
+                <span class="mock-label">Preset</span>
+                <strong>6-stem (HTDemucs)</strong>
+              </div>
+              <div class="mock-pill">
+                <span class="mock-label">Format</span>
+                <strong>WAV (float32)</strong>
+              </div>
+            </div>
+            <div class="mock-job">
+              <div class="mock-job-header">
+                <strong>Artist - Song [dQw4w9WgXcQ]</strong>
+                <span class="status-badge done">Complete</span>
+              </div>
+              <p class="mock-meta">Shared gain: -1.4 dB · Peak: -1.0 dBFS · SHA-256 verified</p>
+              <div class="mock-buttons">
+                <span class="chip">Show files</span>
+                <span class="chip accent">Save a copy: drumless</span>
+                <span class="chip accent">Save a copy: drums</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="workflows" class="section">
+      <div class="container">
+        <div class="section-head">
+          <h2>Four ways to run Jamly</h2>
+          <p>Use the standalone desktop companion, command-line tools, browser extension, or lightweight userscript—all backed by the same durable local queue.</p>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="Jamly workflows">
+          <button class="tab active" role="tab" aria-selected="true" aria-controls="panel-companion" id="tab-companion" data-tab="companion" type="button">
+            1. Desktop Companion
+          </button>
+          <button class="tab" role="tab" aria-selected="false" aria-controls="panel-cli" id="tab-cli" data-tab="cli" type="button">
+            2. CLI &amp; Service
+          </button>
+          <button class="tab" role="tab" aria-selected="false" aria-controls="panel-extension" id="tab-extension" data-tab="extension" type="button">
+            3. Browser Extension
+          </button>
+          <button class="tab" role="tab" aria-selected="false" aria-controls="panel-userscript" id="tab-userscript" data-tab="userscript" type="button">
+            4. Userscript
+          </button>
+        </div>
+
+        <div class="tab-panels">
+          <article class="tab-panel active" id="panel-companion" role="tabpanel" aria-labelledby="tab-companion">
+            <div class="panel-grid">
+              <div>
+                <h3>Zero-Setup Desktop Companion</h3>
+                <p>
+                  Portable archives for macOS (Apple Silicon &amp; Intel), Windows x64, and Linux x64 bundle
+                  Python, Demucs, yt-dlp, Deno, ffmpeg, and ffprobe out of the box.
+                </p>
+                <ol class="steps">
+                  <li>
+                    <strong>Launch the app:</strong> Open <code>Jamly.app</code> (macOS), <code>Jamly.exe</code> (Windows), or <code>Jamly</code> (Linux).
+                  </li>
+                  <li>
+                    <strong>Automatic private pairing:</strong> Jamly opens your browser via a single-use launch file and establishes an authenticated loopback session without putting tokens in URLs.
+                  </li>
+                  <li>
+                    <strong>Submit URLs or local files:</strong> Paste individual track URLs, enter local paths, or pick audio files (<code>.wav</code>, <code>.mp3</code>, <code>.flac</code>, <code>.m4a</code>, <code>.ogg</code>, <code>.opus</code>) directly from your computer.
+                  </li>
+                  <li>
+                    <strong>Close the tab anytime:</strong> Separation continues in the background worker and resumes automatically on restart.
+                  </li>
+                </ol>
+              </div>
+              <div class="code-card">
+                <div class="code-header">
+                  <span>Output directory layout</span>
+                </div>
+                <pre><code>~/Music/jamly/
+  Artist - Song [id]_drums.mp3
+  Artist - Song [id]_no_drums.mp3</code></pre>
+                <p class="code-note">
+                  All exported stems land directly in a single flat folder for easy browsing, while internal manifests stay tucked in <code>.jamly/</code>.
+                </p>
+              </div>
+            </div>
+          </article>
+
+          <article class="tab-panel" id="panel-cli" role="tabpanel" aria-labelledby="tab-cli" hidden>
+            <div class="panel-grid">
+              <div>
+                <h3>Command-Line Interface &amp; Login Service</h3>
+                <p>
+                  Install from source with <a href="https://docs.astral.sh/uv/" target="_blank" rel="noopener">uv</a> and system <code>ffmpeg</code>.
+                  Run one-off batch jobs in the terminal, launch the companion web UI, or register a per-user background service.
+                </p>
+                <ol class="steps">
+                  <li><strong>Install &amp; verify:</strong> Run <code>jamly-doctor</code> to check Python, yt-dlp, Deno, ffmpeg, and Torch device detection (CUDA / MPS / CPU).</li>
+                  <li><strong>Split URLs or local files:</strong> Pass <code>-i</code> flags or pipe newline-separated URLs and local file paths to <code>jamly</code>.</li>
+                  <li><strong>Optional login service:</strong> Use <code>jamly-service install</code> to create a user systemd unit (Linux), LaunchAgent (macOS), or logon Scheduled Task (Windows).</li>
+                </ol>
+              </div>
+              <div class="code-card">
+                <div class="code-header">
+                  <span>Terminal commands</span>
+                  <button class="copy-btn" data-copy="cli-code" type="button">Copy</button>
+                </div>
+                <pre><code id="cli-code"># Install with uv (Python 3.11 or 3.12)
+uv tool install --python 3.12 git+https://github.com/kurtisnotcurtis/jamly.git
+jamly-doctor
+
+# Split a URL or local audio file (drums, karaoke vocals, guitar, or all stems)
+jamly -i "https://youtu.be/VIDEO_ID"
+jamly -i "https://youtu.be/VIDEO_ID" --stem vocals
+jamly -i "~/Music/my_song.flac" --model htdemucs_6s --stem guitar --audio-format wav
+jamly -i "https://youtu.be/VIDEO_ID" --model htdemucs_ft --replace-existing
+
+# Launch the local companion UI or background service
+jamly-companion
+jamly-service install --audio-format wav --port 8765</code></pre>
+              </div>
+            </div>
+          </article>
+
+          <article class="tab-panel" id="panel-extension" role="tabpanel" aria-labelledby="tab-extension" hidden>
+            <div class="panel-grid">
+              <div>
+                <h3>Chrome &amp; Edge Browser Extension</h3>
+                <p>
+                  Send the active browser tab directly to your local Jamly backend, monitor live separation percentages, retry failed jobs, and trigger authenticated downloads from the toolbar popup.
+                </p>
+                <ol class="steps">
+                  <li>
+                    <strong>Export the unpacked extension:</strong> In the Companion UI, expand <em>Optional Chrome / Edge extension</em> and click <strong>Prepare extension</strong> (or run <code>jamly-service browser</code> in the CLI).
+                  </li>
+                  <li>
+                    <strong>Load unpacked:</strong> Open <code>chrome://extensions</code> or <code>edge://extensions</code>, enable <strong>Developer mode</strong>, click <strong>Load unpacked</strong>, and select the exported folder.
+                  </li>
+                  <li>
+                    <strong>Pair with your token:</strong> Open the extension's <strong>Pair / settings</strong> page and paste the backend URL (<code>http://127.0.0.1:8765</code>) and private token from the companion or <code>jamly-service token</code>.
+                  </li>
+                  <li>
+                    <strong>Split with one click:</strong> Click <strong>Use current page</strong>, choose your preset, and press <strong>Split drums</strong>.
+                  </li>
+                </ol>
+              </div>
+              <div class="code-card">
+                <div class="code-header">
+                  <span>Export &amp; pair via CLI</span>
+                  <button class="copy-btn" data-copy="ext-code" type="button">Copy</button>
+                </div>
+                <pre><code id="ext-code"># Start the local backend (if not using jamly-companion)
+jamly-server
+
+# Print the unpacked extension directory and pairing token
+jamly-service browser
+jamly-service token</code></pre>
+                <p class="code-note">
+                  The extension requests active-tab access only when clicked and polls only while its popup is open.
+                </p>
+              </div>
+            </div>
+          </article>
+
+          <article class="tab-panel" id="panel-userscript" role="tabpanel" aria-labelledby="tab-userscript" hidden>
+            <div class="panel-grid">
+              <div>
+                <h3>Tampermonkey / Violentmonkey Userscript</h3>
+                <p>
+                  Prefer not to load an unpacked extension? Jamly includes a lightweight userscript for YouTube and YouTube Music that adds an on-page status badge and one-click enqueue button.
+                </p>
+                <ol class="steps">
+                  <li>
+                    <strong>Export the script:</strong> Run <code>jamly-service userscript</code> to copy <code>jamly.user.js</code> to your user state directory.
+                  </li>
+                  <li>
+                    <strong>Install in your userscript manager:</strong> Drag or import <code>jamly.user.js</code> into Tampermonkey or Violentmonkey.
+                  </li>
+                  <li>
+                    <strong>Pair with your token:</strong> On YouTube or YouTube Music, open the userscript menu command <strong>Pair Jamly</strong> and paste the token from <code>jamly-service token</code>.
+                  </li>
+                  <li>
+                    <strong>Enqueue while browsing:</strong> Click the Jamly button on any video page to queue it on your local backend.
+                  </li>
+                </ol>
+              </div>
+              <div class="code-card">
+                <div class="code-header">
+                  <span>Export userscript</span>
+                  <button class="copy-btn" data-copy="usr-code" type="button">Copy</button>
+                </div>
+                <pre><code id="usr-code"># Export jamly.user.js and retrieve your pairing token
+jamly-service userscript
+jamly-service token</code></pre>
+                <p class="code-note">
+                  Connects exclusively to <code>http://127.0.0.1:8765</code> using <code>GM_xmlhttpRequest</code> with your Bearer token.
+                </p>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="presets" class="section section-alt">
+      <div class="container">
+        <div class="section-head">
+          <h2>Separation presets &amp; audio integrity</h2>
+          <p>Every preset outputs a sample-aligned <code>drums</code> and <code>no_drums</code> pair with a single shared gain so stem balance is never distorted.</p>
+        </div>
+
+        <div class="cards-grid">
+          <div class="card">
+            <div class="card-tag">Default · 1x Speed</div>
+            <h3>Balanced (<code>htdemucs</code>)</h3>
+            <p>
+              Official 4-stem Hybrid Transformer Demucs model. Fast single-model inference suitable for everyday practice tracks.
+            </p>
+          </div>
+          <div class="card">
+            <div class="card-tag">Fine-Tuned · ~4x Slower</div>
+            <h3>Higher quality (<code>htdemucs_ft</code>)</h3>
+            <p>
+              Evaluates a four-model fine-tuned bag (dedicated per-stem transformers). Can reduce cymbal bleed on dense mixes at ~4x compute cost.
+            </p>
+          </div>
+          <div class="card">
+            <div class="card-tag">6-Source · 1x Speed</div>
+            <h3>6-stem (<code>htdemucs_6s</code>)</h3>
+            <p>
+              Separates drums, bass, guitar, piano, vocals, and other in a single pass, then sums all five non-drum stems in 64-bit float blocks for the drumless mix.
+            </p>
+          </div>
+        </div>
+
+        <div class="audio-specs">
+          <div class="spec-item">
+            <h4>Unscaled Float32 Stems</h4>
+            <p>Bypasses Demucs' default per-stem rescaling/clamping so summing <code>drums + no_drums</code> reconstructs the relative mix balance.</p>
+          </div>
+          <div class="spec-item">
+            <h4>4x-Oversampled MP3 Peak Check</h4>
+            <p>320 kbps MP3 exports are decoded and checked with a 4x-oversampled true-peak filter targeting <code>-1 dBFS</code> to prevent lossy inter-sample clipping.</p>
+          </div>
+          <div class="spec-item">
+            <h4>Transactional Exports</h4>
+            <p>Outputs and SHA-256 manifests are staged, <code>fsync</code>ed, and swapped atomically with automatic rollback if interrupted.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture" class="section">
+      <div class="container">
+        <div class="section-head">
+          <h2>Built for local security &amp; durability</h2>
+          <p>Localhost tools shouldn't expose your filesystem or leak credentials to random tabs.</p>
+        </div>
+        <div class="cards-grid">
+          <div class="card">
+            <h3>HMAC Identity Handshake</h3>
+            <p>Before sending a pairing token, the launcher challenges the backend with a 256-bit nonce bound to the loopback URL and queue path.</p>
+          </div>
+          <div class="card">
+            <h3>Zero Tokens in URLs</h3>
+            <p>Companion sessions bootstrap via a private <code>0600</code> single-use HTML form post into tab-scoped <code>sessionStorage</code>—never query parameters.</p>
+          </div>
+          <div class="card">
+            <h3>Host &amp; Origin Isolation</h3>
+            <p>Every request validates HTTP <code>Host</code> and browser <code>Origin</code> headers independently of authentication to block DNS rebinding and cross-site probing.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-row">
+      <p><strong>Jamly</strong> — MIT Licensed. Bundled components retain their respective licenses.</p>
+      <p>Only process media you are authorized to use and follow the source site's terms.</p>
+    </div>
+  </footer>
+</body>
+</html>
