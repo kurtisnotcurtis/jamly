@@ -1,6 +1,14 @@
-# <img src="site/jamly-mark.svg" alt="" width="56" height="56" align="absmiddle"> Jamly
+<p align="center">
+  <img src="site/jamly-mark.svg" alt="Jamly Logo" width="84" height="84" />
+</p>
 
-**[Website & Setup Guide](https://kurtisnotcurtis.github.io/jamly/) · [Download Releases](https://github.com/kurtisnotcurtis/jamly/releases) · [Architecture (DESIGN.md)](DESIGN.md)**
+<h1 align="center">Jamly</h1>
+
+<p align="center">
+  <a href="https://kurtisnotcurtis.github.io/jamly/">Website &amp; Setup Guide</a> ·
+  <a href="https://github.com/kurtisnotcurtis/jamly/releases">Download Releases</a> ·
+  <a href="DESIGN.md">Architecture (DESIGN.md)</a>
+</p>
 
 Split any song or video into isolated **drums** and **drumless** practice tracks—or **karaoke** (`vocals` + `no_vocals`), **bass**, **guitar**, **piano**, or **all individual stems**—100% locally on your computer.
 
