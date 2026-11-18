@@ -1,15 +1,15 @@
 :root {
   color-scheme: dark;
-  --bg: #0f1218;
-  --bg-alt: #151a23;
-  --surface: #1b212d;
-  --surface-hover: #242c3c;
-  --border: #2e384d;
-  --text: #eef1f8;
-  --muted: #a6b0c5;
-  --accent: #9fb2ff;
-  --accent-strong: #7c95ff;
-  --accent-ink: #0f1738;
+  --bg: #120e10;
+  --bg-alt: #181315;
+  --surface: #201a1c;
+  --surface-hover: #2b2326;
+  --border: #3d3135;
+  --text: #f5eff1;
+  --muted: #b8adb1;
+  --accent: #f08a9e;
+  --accent-strong: #e3647e;
+  --accent-ink: #2d0913;
   --ok: #5ce0a0;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   line-height: 1.55;
@@ -44,7 +44,7 @@ a:hover {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: rgba(15, 18, 24, 0.88);
+  background: rgba(18, 14, 16, 0.88);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
 }
@@ -233,7 +233,7 @@ h1 {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #3d4860;
+  background: #4d3f44;
 }
 
 .window-title {
@@ -311,7 +311,7 @@ h1 {
 }
 
 .chip.accent {
-  border-color: rgba(159, 178, 255, 0.45);
+  border-color: rgba(240, 138, 158, 0.45);
   color: var(--accent);
 }
 
@@ -496,7 +496,7 @@ code {
 .spec-item {
   padding: 18px 20px;
   border-left: 3px solid var(--accent);
-  background: rgba(27, 33, 45, 0.55);
+  background: rgba(32, 26, 28, 0.55);
   border-radius: 0 8px 8px 0;
 }
 

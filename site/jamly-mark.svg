@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 440" width="440" height="440">
-  <rect width="440" height="440" rx="96" fill="#9fb2ff"/>
+  <rect width="440" height="440" rx="96" fill="#f08a9e"/>
 
   <!-- Jam dripping from the underside of the butterknife blade to form beamed eighth notes (♫) -->
-  <g fill="#0f1738">
+  <g fill="#2d0913">
     <path d="M 96 170
              L 284 134
              C 278 148, 276 164, 276 184
@@ -28,14 +28,14 @@
              C 156 -22, 168 -11, 168 3
              C 168 17, 156 28, 138 28
              C 108 28, 72 20, 44 20 Z"
-          fill="#0f1738" stroke="#0f1738" stroke-width="10" stroke-linejoin="round"/>
-    <circle cx="138" cy="3" r="9" fill="#9fb2ff"/>
+          fill="#2d0913" stroke="#2d0913" stroke-width="10" stroke-linejoin="round"/>
+    <circle cx="138" cy="3" r="9" fill="#f08a9e"/>
     <path d="M 48 -28
              L -128 -28
              C -160 -28, -178 -10, -178 10
              C -178 28, -154 40, -112 40
              C -60 40, -4 34, 36 26
              L 48 16 Z"
-          fill="#eef1f8" stroke="#0f1738" stroke-width="16" stroke-linejoin="round"/>
+          fill="#eef1f8" stroke="#2d0913" stroke-width="16" stroke-linejoin="round"/>
   </g>
 </svg>
