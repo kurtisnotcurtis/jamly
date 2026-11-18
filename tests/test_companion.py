@@ -4,10 +4,27 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from jamly import companion
+from jamly import companion, runtime
 
 
 class CompanionLauncherTests(unittest.TestCase):
+    def test_module_command_resolves_symlinked_frozen_launcher(self):
+        with tempfile.TemporaryDirectory() as root:
+            base = Path(root)
+            bundle = base / "package" / "Jamly"
+            bundle.mkdir(parents=True)
+            launcher = bundle / ("Jamly.exe" if os.name == "nt" else "Jamly")
+            launcher.write_text("launcher")
+            runtime_name = "jamly-runtime.exe" if os.name == "nt" else "jamly-runtime"
+            links = base / "links"
+            links.mkdir()
+            alias = links / ("jamly.exe" if os.name == "nt" else "jamly")
+            with patch.object(runtime, "bundle_root", return_value=bundle / "_internal"), patch.object(
+                runtime.sys, "executable", str(alias)
+            ), patch.object(Path, "resolve", return_value=launcher):
+                command = runtime.module_command("jamly.server", "--port", "8765")
+            self.assertEqual(command, [str(bundle / runtime_name), "--module", "jamly.server", "--port", "8765"])
+
     def test_compact_cli_override_is_normalized_before_updating_running_backend(self):
         with tempfile.TemporaryDirectory() as root:
             state = Path(root)

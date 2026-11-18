@@ -29,7 +29,7 @@ Self-contained archives for **macOS** (Apple Silicon & Intel), **Windows x64**, 
 1. Download the archive for your OS from [Releases](https://github.com/kurtisnotcurtis/jamly/releases) (or the **Companion packages** GitHub Actions workflow).
 2. Launch the companion:
    - **macOS 13+**: Extract the zip, move `Jamly.app` to `Applications`, and open it.
-   - **Windows**: Extract the **entire** zip and run `Jamly.exe` (keep all files in the extracted folder together).
+   - **Windows**: Install via WinGet (`winget install kurtisnotcurtis.Jamly` and run `jamly`), or extract the **entire** zip and run `Jamly.exe` (keep all files in the extracted folder together).
    - **Linux (glibc 2.35+)**: Extract the `.tar.gz` and run `./Jamly` inside the extracted folder.
 3. Jamly opens your browser to the local companion page automatically:
    - Paste a track URL or local file path—or click **Choose files** to upload audio from your computer.

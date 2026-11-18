@@ -25,8 +25,17 @@ def _load_version_tool():
     return module
 
 
+def _load_winget_tool():
+    path = Path(__file__).resolve().parents[1] / "tools" / "render_winget.py"
+    spec = importlib.util.spec_from_file_location("jamly_tools_render_winget", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 native_audio = _load_native_audio()
 version_tool = _load_version_tool()
+winget_tool = _load_winget_tool()
 
 PAYLOAD = b"fake checksum-pinned source archive"
 URL = "https://example.com/openssl.tar.gz"
@@ -168,6 +177,41 @@ class VersionToolTests(unittest.TestCase):
             (temp_root / "pyproject.toml").write_text('version = "0.2.1"\n', encoding="utf-8")
             with self.assertRaises(ValueError):
                 version_tool.check_versions(root=temp_root)
+
+
+class WingetManifestTests(unittest.TestCase):
+    def test_renders_manifests_and_zip_archive(self):
+        import zipfile
+
+        digest = "ab" * 32
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            out_dir = base / "winget"
+            zip_path = base / "winget-manifests-0.1.0.zip"
+            manifest_dir = winget_tool.render_winget_manifests(
+                "v0.1.0",
+                digest,
+                out_dir,
+                release_date="2026-11-17",
+                zip_path=zip_path,
+            )
+            self.assertEqual(manifest_dir, out_dir / "kurtisnotcurtis.Jamly" / "0.1.0")
+            installer_text = (manifest_dir / "kurtisnotcurtis.Jamly.installer.yaml").read_text(encoding="utf-8")
+            self.assertIn("PackageVersion: 0.1.0", installer_text)
+            self.assertIn("ReleaseDate: 2026-11-17", installer_text)
+            self.assertIn("InstallerSha256: " + digest.upper(), installer_text)
+            self.assertIn("RelativeFilePath: Jamly\\Jamly.exe", installer_text)
+            self.assertNotIn("__", installer_text)
+            with zipfile.ZipFile(zip_path) as zf:
+                names = sorted(zf.namelist())
+            self.assertEqual(
+                names,
+                [
+                    "kurtisnotcurtis.Jamly/0.1.0/kurtisnotcurtis.Jamly.installer.yaml",
+                    "kurtisnotcurtis.Jamly/0.1.0/kurtisnotcurtis.Jamly.locale.en-US.yaml",
+                    "kurtisnotcurtis.Jamly/0.1.0/kurtisnotcurtis.Jamly.yaml",
+                ],
+            )
 
 
 if __name__ == "__main__":

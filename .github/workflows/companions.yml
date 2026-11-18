@@ -138,7 +138,7 @@ jobs:
           pattern: Jamly-*
           path: dist/release
           merge-multiple: true
-      - name: Package browser extension and consolidated checksums
+      - name: Package browser extension, WinGet manifests, and consolidated checksums
         run: |
           VERSION="$(python3 tools/version.py --check --tag "${GITHUB_REF_NAME}")"
           python3 - "$VERSION" <<'PY'
@@ -147,6 +147,9 @@ jobs:
           import shutil
           import sys
           import zipfile
+
+          sys.path.insert(0, "tools")
+          from render_winget import render_winget_manifests
 
           version = sys.argv[1]
           release_dir = Path("dist/release")
@@ -161,6 +164,15 @@ jobs:
           shutil.copyfile(
               Path("browser/userscripts/jamly.user.js"),
               release_dir / f"Jamly-{version}-jamly.user.js",
+          )
+
+          win_zip = release_dir / f"Jamly-{version}-win32-amd64.zip"
+          win_sha256 = hashlib.sha256(win_zip.read_bytes()).hexdigest().upper()
+          render_winget_manifests(
+              version,
+              win_sha256,
+              Path("dist/winget"),
+              zip_path=release_dir / f"winget-manifests-{version}.zip",
           )
 
           checksum_lines = []

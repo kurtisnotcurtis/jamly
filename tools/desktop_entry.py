@@ -43,7 +43,7 @@ def main() -> int:
         return launch(arguments)
     except Exception as exc:
         traceback.print_exc()
-        if "--no-browser" not in arguments and Path(sys.executable).stem == "Jamly":
+        if "--no-browser" not in arguments and Path(sys.executable).resolve().stem.lower() == "jamly":
             from jamly.companion import show_startup_error
             show_startup_error(state, str(exc))
         return 2

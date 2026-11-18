@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+
+PackageIdentifier: kurtisnotcurtis.Jamly
+PackageVersion: __VERSION__
+Platform:
+  - Windows.Desktop
+MinimumOSVersion: 10.0.19041.0
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: Jamly\Jamly.exe
+    PortableCommandAlias: jamly
+  - RelativeFilePath: Jamly\jamly-runtime.exe
+    PortableCommandAlias: jamly-runtime
+Commands:
+  - jamly
+  - jamly-runtime
+UpgradeBehavior: install
+ReleaseDate: __RELEASE_DATE__
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/kurtisnotcurtis/jamly/releases/download/v__VERSION__/Jamly-__VERSION__-win32-amd64.zip
+    InstallerSha256: __SHA256_AMD64__
+ManifestType: installer
+ManifestVersion: 1.6.0

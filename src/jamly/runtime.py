@@ -15,7 +15,7 @@ def bundle_root() -> Path | None:
 def module_command(module: str, *args: str, executable: str | None = None) -> list[str]:
     if bundle_root() is not None:
         executable = executable or str(
-            Path(sys.executable).with_name("jamly-runtime.exe" if os.name == "nt" else "jamly-runtime")
+            Path(sys.executable).resolve().with_name("jamly-runtime.exe" if os.name == "nt" else "jamly-runtime")
         )
         return [executable, "--module", module, *args]
     return [executable or sys.executable, "-m", module, *args]
