@@ -174,19 +174,19 @@
                   <span>Terminal commands</span>
                   <button class="copy-btn" data-copy="cli-code" type="button">Copy</button>
                 </div>
-                <pre><code id="cli-code"># Install with uv (Python 3.11 or 3.12)
-uv tool install --python 3.12 git+https://github.com/kurtisnotcurtis/jamly.git
-jamly-doctor
+                <pre><code id="cli-code"><span class="tok-comment"># Install with uv (Python 3.11 or 3.12)</span>
+<span class="tok-cmd">uv</span> tool install <span class="tok-flag">--python</span> 3.12 <span class="tok-str">git+https://github.com/kurtisnotcurtis/jamly.git</span>
+<span class="tok-cmd">jamly-doctor</span>
 
-# Split a URL or local audio file (drums, karaoke vocals, guitar, or all stems)
-jamly -i "https://youtu.be/VIDEO_ID"
-jamly -i "https://youtu.be/VIDEO_ID" --stem vocals
-jamly -i "~/Music/my_song.flac" --model htdemucs_6s --stem guitar --audio-format wav
-jamly -i "https://youtu.be/VIDEO_ID" --model htdemucs_ft --replace-existing
+<span class="tok-comment"># Split a URL or local audio file (drums, karaoke vocals, guitar, or all stems)</span>
+<span class="tok-cmd">jamly</span> <span class="tok-flag">-i</span> <span class="tok-str">"https://youtu.be/VIDEO_ID"</span>
+<span class="tok-cmd">jamly</span> <span class="tok-flag">-i</span> <span class="tok-str">"https://youtu.be/VIDEO_ID"</span> <span class="tok-flag">--stem</span> vocals
+<span class="tok-cmd">jamly</span> <span class="tok-flag">-i</span> <span class="tok-str">"~/Music/my_song.flac"</span> <span class="tok-flag">--model</span> htdemucs_6s <span class="tok-flag">--stem</span> guitar <span class="tok-flag">--audio-format</span> wav
+<span class="tok-cmd">jamly</span> <span class="tok-flag">-i</span> <span class="tok-str">"https://youtu.be/VIDEO_ID"</span> <span class="tok-flag">--model</span> htdemucs_ft <span class="tok-flag">--replace-existing</span>
 
-# Launch the local companion UI or background service
-jamly-companion
-jamly-service install --audio-format wav --port 8765</code></pre>
+<span class="tok-comment"># Launch the local companion UI or background service</span>
+<span class="tok-cmd">jamly-companion</span>
+<span class="tok-cmd">jamly-service</span> install <span class="tok-flag">--audio-format</span> wav <span class="tok-flag">--port</span> 8765</code></pre>
               </div>
             </div>
           </article>
@@ -218,12 +218,12 @@ jamly-service install --audio-format wav --port 8765</code></pre>
                   <span>Export &amp; pair via CLI</span>
                   <button class="copy-btn" data-copy="ext-code" type="button">Copy</button>
                 </div>
-                <pre><code id="ext-code"># Start the local backend (if not using jamly-companion)
-jamly-server
+                <pre><code id="ext-code"><span class="tok-comment"># Start the local backend (if not using jamly-companion)</span>
+<span class="tok-cmd">jamly-server</span>
 
-# Print the unpacked extension directory and pairing token
-jamly-service browser
-jamly-service token</code></pre>
+<span class="tok-comment"># Print the unpacked extension directory and pairing token</span>
+<span class="tok-cmd">jamly-service</span> browser
+<span class="tok-cmd">jamly-service</span> token</code></pre>
                 <p class="code-note">
                   The extension requests active-tab access only when clicked and polls only while its popup is open.
                 </p>
@@ -258,9 +258,9 @@ jamly-service token</code></pre>
                   <span>Export userscript</span>
                   <button class="copy-btn" data-copy="usr-code" type="button">Copy</button>
                 </div>
-                <pre><code id="usr-code"># Export jamly.user.js and retrieve your pairing token
-jamly-service userscript
-jamly-service token</code></pre>
+                <pre><code id="usr-code"><span class="tok-comment"># Export jamly.user.js and retrieve your pairing token</span>
+<span class="tok-cmd">jamly-service</span> userscript
+<span class="tok-cmd">jamly-service</span> token</code></pre>
                 <p class="code-note">
                   Connects exclusively to <code>http://127.0.0.1:8765</code> using <code>GM_xmlhttpRequest</code> with your Bearer token.
                 </p>
