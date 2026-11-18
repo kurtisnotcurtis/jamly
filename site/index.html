@@ -16,7 +16,14 @@
         <img class="brand-mark" src="jamly-mark.svg" alt="" width="32" height="32">
         <span class="brand-text">Jamly</span>
       </a>
-      <nav aria-label="Primary navigation">
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="primary-nav" aria-label="Toggle navigation menu">
+        <svg class="nav-toggle-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line class="line-top" x1="4" y1="7" x2="20" y2="7" />
+          <line class="line-mid" x1="4" y1="12" x2="20" y2="12" />
+          <line class="line-bot" x1="4" y1="17" x2="20" y2="17" />
+        </svg>
+      </button>
+      <nav id="primary-nav" aria-label="Primary navigation">
         <a href="#workflows">How to Use</a>
         <a href="#presets">Presets &amp; Audio</a>
         <a href="#architecture">Security &amp; Design</a>

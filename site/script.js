@@ -27,6 +27,38 @@
     tab.addEventListener("click", () => selectTab(tab.dataset.tab));
   }
 
+  const navToggle = document.querySelector(".nav-toggle");
+  const primaryNav = document.getElementById("primary-nav");
+
+  function setNavOpen(open) {
+    if (!navToggle || !primaryNav) return;
+    navToggle.setAttribute("aria-expanded", String(open));
+    primaryNav.classList.toggle("is-open", open);
+  }
+
+  if (navToggle && primaryNav) {
+    navToggle.addEventListener("click", () => {
+      const isOpen = navToggle.getAttribute("aria-expanded") === "true";
+      setNavOpen(!isOpen);
+    });
+
+    for (const link of primaryNav.querySelectorAll("a")) {
+      link.addEventListener("click", () => setNavOpen(false));
+    }
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        setNavOpen(false);
+      }
+    });
+
+    window.addEventListener("resize", () => {
+      if (window.innerWidth > 720) {
+        setNavOpen(false);
+      }
+    });
+  }
+
   for (const button of document.querySelectorAll(".copy-btn[data-copy]")) {
     button.addEventListener("click", async () => {
       const target = document.getElementById(button.dataset.copy);
