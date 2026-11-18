@@ -1,4 +1,4 @@
-# <img src="site/jamly-mark.svg" alt="" width="34" height="34" align="absmiddle"> Jamly 🎸 🪓 🥁
+# <img src="site/jamly-mark.svg" alt="" width="56" height="56" align="absmiddle"> Jamly
 
 **[Website & Setup Guide](https://kurtisnotcurtis.github.io/jamly/) · [Download Releases](https://github.com/kurtisnotcurtis/jamly/releases) · [Architecture (DESIGN.md)](DESIGN.md)**
 
