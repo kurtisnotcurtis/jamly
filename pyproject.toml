@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jamly-audio-sep"
-version = "0.1.1"
+version = "0.1.2"
 description = "Split media URLs or local audio into drums/drumless, karaoke, or multi-stem tracks locally with Demucs."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
@@ -57,7 +57,7 @@ sphn = ["cmake==3.31.6"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-jamly = ["web/*.html", "web/*.js", "web/*.css"]
+jamly = ["web/*.html", "web/*.js", "web/*.css", "web/*.svg"]
 
 [tool.setuptools.data-files]
 "share/jamly/browser/extension" = [

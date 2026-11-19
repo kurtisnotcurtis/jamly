@@ -83,8 +83,14 @@ class ServerTests(unittest.TestCase):
         code, page, headers = self.request("GET", "/app/", auth=False, raw=True)
         self.assertEqual(code, 200)
         self.assertIn(b"Separation preset", page)
+        self.assertIn(b'<link rel="icon" href="/app/jamly.svg" type="image/svg+xml">', page)
         self.assertNotIn(self.app._token.encode(), page)
         self.assertIn("frame-ancestors 'none'", headers["Content-Security-Policy"])
+        self.assertIn("img-src 'self'", headers["Content-Security-Policy"])
+        icon_code, icon_bytes, icon_headers = self.request("GET", "/app/jamly.svg", auth=False, raw=True)
+        self.assertEqual(icon_code, 200)
+        self.assertEqual(icon_headers["Content-Type"], "image/svg+xml")
+        self.assertIn(b"<svg", icon_bytes)
         self.assertEqual(self.request("GET", "/app/../../server-token", auth=False)[0], 404)
         self.assertEqual(self.request("POST", "/app/launch", {}, auth=False)[0], 401)
 
@@ -375,6 +381,75 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request("GET", first_url, raw=True)[1], b"htdemucs-drums")
         second_url = next(item["url"] for item in job["outputs"] if item["kind"] == "drums")
         self.assertEqual(self.request("GET", second_url, raw=True)[1], b"htdemucs_6s-drums")
+
+    def test_clear_and_rescan_exports_and_open_source_folder(self):
+        def process(wid, args, **_kwargs):
+            meta_dir = Path(args.output_dir) / ".jamly" / wid / args.model / args.audio_format
+            meta_dir.mkdir(parents=True, exist_ok=True)
+            audio_dir = Path(args.output_dir)
+            audio_dir.mkdir(parents=True, exist_ok=True)
+            paths = {}
+            for kind in ("drums", "no_drums"):
+                path = audio_dir / f"{wid}_{kind}.{args.audio_format}"
+                path.write_bytes(kind.encode())
+                paths[kind] = path
+            metadata = {
+                "watch_id": wid,
+                "source_url": self.source,
+                "title": "Test Track",
+                "processing_version": PROCESSING_VERSION,
+                "generation": "gen-rescan",
+                "model": args.model,
+                "stem": args.stem,
+                "format": args.audio_format,
+                "outputs": {kind: {"file": path.name, "sha256": checksum(path)}
+                            for kind, path in paths.items()},
+            }
+            meta_path = meta_dir / "metadata.json"
+            meta_path.write_text(json.dumps(metadata), encoding="utf-8")
+            return ItemResult(wid, status="done", drums_path=str(paths["drums"]),
+                              nodrums_path=str(paths["no_drums"]), meta_path=str(meta_path),
+                              generation="gen-rescan")
+
+        self.start(process)
+        output_root = self.root / "output"
+        self.request("POST", "/add", {"inputs": [self.source]})
+        self.wait_for(lambda state: state["done"] == 1)
+
+        with patch.object(server, "open_directory") as mocked_open:
+            code, _, _ = self.request("POST", "/app/open-folder", {"id": self.wid, "target": "source"})
+            self.assertEqual(code, 400)
+            mocked_open.assert_not_called()
+
+        code, cleared, _ = self.request("POST", "/app/clear", {"id": self.wid})
+        self.assertEqual(code, 200)
+        self.assertEqual(cleared["removed"], 1)
+        self.assertEqual(self.request("GET", "/status")[1]["jobs"], [])
+        self.assertEqual(self.request("POST", "/app/clear", {"id": self.wid})[0], 404)
+
+        code, rescanned, _ = self.request("POST", "/app/rescan", {})
+        self.assertEqual(code, 200)
+        self.assertEqual(rescanned["restored"], 1)
+        state = self.request("GET", "/status")[1]
+        self.assertEqual(len(state["jobs"]), 1)
+        self.assertEqual(state["jobs"][0]["watch_id"], self.wid)
+        self.assertEqual(state["jobs"][0]["title"], "Test Track")
+        self.assertTrue((output_root / f"{self.wid}_drums.mp3").is_file())
+
+        code, bulk_cleared, _ = self.request("POST", "/app/clear", {})
+        self.assertEqual(code, 200)
+        self.assertEqual(bulk_cleared["removed"], 1)
+        self.assertEqual(self.request("GET", "/status")[1]["jobs"], [])
+
+        local_file = self.root / "local-demo.wav"
+        local_file.write_bytes(b"RIFFdemo")
+        self.request("POST", "/add", {"inputs": [str(local_file)]})
+        local_state = self.wait_for(lambda s: s["done"] == 1)
+        local_wid = local_state["jobs"][0]["watch_id"]
+        with patch.object(server, "open_directory") as mocked_open:
+            code, _, _ = self.request("POST", "/app/open-folder", {"id": local_wid, "target": "source"})
+            self.assertEqual(code, 200)
+            mocked_open.assert_called_once_with(local_file.parent)
 
 
 class HostTests(unittest.TestCase):

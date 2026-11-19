@@ -98,12 +98,114 @@
     return result;
   }
 
-  function button(label, task) {
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const ICONS = {
+    download: [
+      "M12 3v11",
+      "M8 10l4 4 4-4",
+      "M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2",
+    ],
+    folder: [
+      "M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
+    ],
+    external: [
+      "M14 4h6v6",
+      "M10 14L20 4",
+      "M20 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5",
+    ],
+    file: [
+      "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z",
+      "M14 3v6h6",
+    ],
+    retry: [
+      "M21 12a9 9 0 1 1-2.64-6.36",
+      "M21 3v6h-6",
+    ],
+    rescan: [
+      "M3 12a9 9 0 0 1 15.36-6.36L21 8",
+      "M21 3v5h-5",
+      "M21 12a9 9 0 0 1-15.36 6.36L3 16",
+      "M3 21v-5h5",
+    ],
+    clear: [
+      "M18 6L6 18",
+      "M6 6l12 12",
+    ],
+  };
+
+  function svgIcon(name) {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", "16");
+    svg.setAttribute("height", "16");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    for (const d of ICONS[name] || []) {
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", d);
+      svg.appendChild(path);
+    }
+    return svg;
+  }
+
+  function enhanceToolbarButton(id, iconName) {
+    const el = byId(id);
+    if (!el) return;
+    const label = el.textContent.trim();
+    el.replaceChildren(svgIcon(iconName), document.createTextNode(label));
+  }
+
+  function iconButton(iconName, label, task, extraClass = "") {
     const element = document.createElement("button");
     element.type = "button";
-    element.textContent = label;
+    element.className = extraClass ? `icon-btn ${extraClass}` : "icon-btn";
+    element.title = label;
+    element.setAttribute("aria-label", label);
+    element.appendChild(svgIcon(iconName));
     element.addEventListener("click", () => action(element, task));
     return element;
+  }
+
+  function downloadButton(text, ariaLabel, task) {
+    const element = document.createElement("button");
+    element.type = "button";
+    element.className = "download-btn";
+    element.title = ariaLabel;
+    element.setAttribute("aria-label", ariaLabel);
+    const span = document.createElement("span");
+    span.textContent = text;
+    element.append(svgIcon("download"), span);
+    element.addEventListener("click", () => action(element, task));
+    return element;
+  }
+
+  function sourceControl(job) {
+    const source = job.source_url;
+    if (!source) return null;
+    try {
+      const parsed = new URL(source);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        const link = document.createElement("a");
+        link.className = "icon-btn";
+        link.href = parsed.href;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.title = "Open original URL";
+        link.setAttribute("aria-label", "Open original URL");
+        link.appendChild(svgIcon("external"));
+        return link;
+      }
+    } catch (_error) {
+      // Local filesystem paths are opened via the backend folder opener.
+    }
+    if (source === job.watch_id) return null;
+    return iconButton("file", "Show source file folder", () => post("/app/open-folder", {
+      id: job.watch_id, target: "source",
+    }));
   }
 
   function download(output) {
@@ -156,36 +258,57 @@
     byId("pairing").hidden = true;
     byId("counts").textContent =
       `Queued: ${status.pending} | Complete: ${status.done} | Failed: ${status.failed}`;
+    const hasTerminal = status.jobs.some(job => !["pending", "running"].includes(job.status));
+    if (byId("clear-exports")) {
+      byId("clear-exports").disabled = !hasTerminal;
+    }
     byId("jobs").replaceChildren();
     for (const job of status.jobs) {
       const row = document.createElement("li");
+      const main = document.createElement("div");
+      main.className = "job-main";
+      const info = document.createElement("div");
+      info.className = "job-info";
+      const titleRow = document.createElement("div");
+      titleRow.className = "job-title-row";
       const title = document.createElement("p");
       title.className = "job-title";
       title.textContent = job.title || job.watch_id;
-      row.appendChild(title);
-      const detail = document.createElement("p");
+      titleRow.appendChild(title);
       const isCurrent = status.current?.watch_id === job.watch_id;
       const stage = isCurrent ? status.current.stage : job.status;
+      const badge = document.createElement("span");
+      const badgeTone = (job.status === "done" || job.status === "skipped")
+        ? "done"
+        : (["pending", "running"].includes(job.status) ? "active" : "error");
+      badge.className = `status-badge ${badgeTone}`;
+      badge.textContent = stages[stage] || stage;
+      titleRow.appendChild(badge);
+      info.appendChild(titleRow);
+      const detail = document.createElement("p");
+      detail.className = "job-detail";
       const progressText = isCurrent && typeof status.current?.progress === "number"
         ? ` (${status.current.progress}%)` : "";
       const model = models.find(choice => choice.id === job.model)?.label || job.model;
       const stemTag = job.stem && job.stem !== "drums" ? ` | ${job.stem}` : "";
       detail.textContent = `${stages[stage] || stage}${progressText} | ${model}${stemTag} | ${job.audio_format.toUpperCase()}`;
-      row.appendChild(detail);
+      info.appendChild(detail);
       if (job.error) {
         const error = document.createElement("p");
         error.className = "error";
         error.textContent = job.error;
-        row.appendChild(error);
+        info.appendChild(error);
       }
-      if (job.outputs.length || job.exports?.length) {
-        row.appendChild(button("Show files", () => post("/app/open-folder", { id: job.watch_id })));
+      main.appendChild(info);
+
+      const actions = document.createElement("div");
+      actions.className = "job-actions";
+      const hasOutputs = Boolean(job.outputs.length || job.exports?.length);
+      if (hasOutputs) {
         for (const output of job.outputs) {
           if (output.kind === "metadata") continue;
-          row.appendChild(button(
-            "Save a copy: " + outputLabel(output.kind),
-            () => download(output),
-          ));
+          const label = outputLabel(output.kind);
+          actions.appendChild(downloadButton(label, "Save a copy: " + label, () => download(output)));
         }
         for (const exp of job.exports || []) {
           const expModel = models.find(choice => choice.id === exp.model)?.label || exp.model;
@@ -193,19 +316,41 @@
           const expFormat = String(exp.audio_format || "").toUpperCase();
           for (const output of exp.outputs || []) {
             if (output.kind === "metadata") continue;
-            row.appendChild(button(
-              `Save a copy: ${outputLabel(output.kind)} (${expModel}${expStem} ${expFormat})`,
+            const kindLabel = outputLabel(output.kind);
+            actions.appendChild(downloadButton(
+              `${kindLabel} (${expModel}${expStem} ${expFormat})`,
+              `Save a copy: ${kindLabel} (${expModel}${expStem} ${expFormat})`,
               () => download(output),
             ));
           }
         }
       }
+      const controls = document.createElement("div");
+      controls.className = "job-controls";
+      const sourceBtn = sourceControl(job);
+      if (sourceBtn) controls.appendChild(sourceBtn);
+      if (hasOutputs) {
+        controls.appendChild(iconButton("folder", "Show files in folder", () => post("/app/open-folder", {
+          id: job.watch_id,
+        })));
+      }
       if (!["pending", "running"].includes(job.status)) {
-        row.appendChild(button("Retry / check files", async () => {
+        controls.appendChild(iconButton("retry", "Retry / check files", async () => {
           await jamlyClient.retry(config, job.watch_id, byId("replace").checked);
           await refresh();
         }));
+        controls.appendChild(iconButton("clear", "Remove from list", async () => {
+          await post("/app/clear", { id: job.watch_id });
+          await refresh();
+        }, "danger"));
       }
+      if (controls.childElementCount) {
+        actions.appendChild(controls);
+      }
+      if (actions.childElementCount) {
+        main.appendChild(actions);
+      }
+      row.appendChild(main);
       byId("jobs").appendChild(row);
     }
     if (status.error) showError(new Error(status.error));
@@ -293,6 +438,28 @@
   byId("open-output").addEventListener("click", () => action(byId("open-output"), async () => {
     await post("/settings", settings());
     await post("/app/open-folder");
+  }));
+  enhanceToolbarButton("open-exports-folder", "folder");
+  enhanceToolbarButton("rescan-exports", "rescan");
+  enhanceToolbarButton("clear-exports", "clear");
+  byId("open-exports-folder")?.addEventListener("click", () => action(byId("open-exports-folder"), async () => {
+    await post("/settings", settings());
+    await post("/app/open-folder");
+  }));
+  byId("rescan-exports")?.addEventListener("click", () => action(byId("rescan-exports"), async () => {
+    await post("/settings", settings());
+    const result = await post("/app/rescan");
+    await refresh();
+    byId("connection").textContent = result.restored
+      ? `Restored ${result.restored} export(s) from your output folder.`
+      : "Export folder scanned; list is up to date.";
+  }));
+  byId("clear-exports")?.addEventListener("click", () => action(byId("clear-exports"), async () => {
+    const result = await post("/app/clear");
+    await refresh();
+    byId("connection").textContent = result.removed
+      ? `Cleared ${result.removed} item(s) from the list. Audio files remain in your output folder.`
+      : "No finished or failed items to clear.";
   }));
   byId("prepare-extension").addEventListener("click", () => action(byId("prepare-extension"), async () => {
     const extension = await post("/app/extension");

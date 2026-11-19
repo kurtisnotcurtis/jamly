@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Jamly - local stem &amp; practice track exports</title>
+  <link rel="icon" href="/app/jamly.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/app/app.css">
   <script defer src="/app/jamly_client.js"></script>
   <script defer src="/app/app.js"></script>
@@ -11,7 +12,13 @@
 <body>
   <main>
     <header>
-      <div><h1>Jamly</h1><p>Practice tracks, karaoke, and stems. Separated on your computer.</p></div>
+      <div class="brand-row">
+        <img class="brand-logo" src="/app/jamly.svg" alt="" width="44" height="44">
+        <div>
+          <h1>Jamly</h1>
+          <p>Practice tracks, karaoke, and stems. Separated on your computer.</p>
+        </div>
+      </div>
       <button id="quit" type="button">Quit companion</button>
     </header>
     <p id="connection" role="status">Connecting to your companion...</p>
@@ -67,9 +74,18 @@
       </form>
       <p class="hint">The first use of each preset downloads model weights. Separation can take several minutes.
         Closing this page does not stop jobs. Only use media you are authorized to download.</p>
-      <h2>Exports</h2>
-      <p id="counts" role="status"></p>
-      <p class="hint">Completed files are already saved in your output folder. "Save a copy" uses the browser's download location.</p>
+      <div class="exports-header">
+        <div>
+          <h2>Exports</h2>
+          <p id="counts" role="status"></p>
+        </div>
+        <div class="exports-actions">
+          <button id="open-exports-folder" type="button" class="toolbar-btn" title="Open export folder">Open export folder</button>
+          <button id="rescan-exports" type="button" class="toolbar-btn" title="Rescan export folder for saved Jamly exports">Rescan folder</button>
+          <button id="clear-exports" type="button" class="toolbar-btn" title="Clear finished and failed items from this list (keeps files on disk)">Clear list</button>
+        </div>
+      </div>
+      <p class="hint">Completed files are already saved in your output folder. Download buttons save a copy via your browser.</p>
       <ul id="jobs"></ul>
       <details>
         <summary>Optional Chrome / Edge extension</summary>

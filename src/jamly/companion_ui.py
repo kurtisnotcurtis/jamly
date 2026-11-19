@@ -13,7 +13,7 @@ import warnings
 
 from .runtime import browser_assets
 
-CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; "
        "form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 LAUNCH_LIFETIME = 120
 SESSION_LIFETIME = 24 * 60 * 60
@@ -102,7 +102,8 @@ class CompanionUI:
         nonce = secrets.token_urlsafe(24)
         body = (
             '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-            '<title>Jamly</title></head><body><script nonce="%s">'
+            '<title>Jamly</title><link rel="icon" href="/app/jamly.svg" type="image/svg+xml">'
+            '</head><body><script nonce="%s">'
             'sessionStorage.setItem("jamly-token", %s);location.replace("/app/");'
             '</script></body></html>'
         ) % (nonce, json.dumps(token))
@@ -116,6 +117,7 @@ class CompanionUI:
             "/app/": (web / "index.html", "text/html; charset=utf-8"),
             "/app/app.js": (web / "app.js", "text/javascript; charset=utf-8"),
             "/app/app.css": (web / "app.css", "text/css; charset=utf-8"),
+            "/app/jamly.svg": (web / "jamly-mark.svg", "image/svg+xml"),
             "/app/jamly_client.js": (browser_assets("extension") / "jamly_client.js",
                                    "text/javascript; charset=utf-8"),
         }

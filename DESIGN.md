@@ -166,5 +166,7 @@ and loopback control protocol (`api_version`) are versioned independently from t
 To cut a release, run `uv run --locked python tools/version.py --set X.Y.Z`, run the test and lint
 suites, commit on `main`, and push an annotated `vX.Y.Z` tag. Tag pushes trigger `companions.yml`,
 which verifies the tag against `tools/version.py`, builds and smoke-tests the four desktop companion
-archives alongside their corresponding native source archives, packages the browser extension and
-userscript, writes `SHA256SUMS.txt`, and publishes the GitHub Release.
+archives alongside their corresponding native source archives, renders release manifests for WinGet,
+AUR (`jamly-bin`), and the Homebrew Tap, packages the browser extension and userscript, writes
+`SHA256SUMS.txt`, and publishes the GitHub Release; `pypi.yml` publishes `jamly-audio-sep` to PyPI
+via Trusted Publishing when `PYPI_PUBLISH_ENABLED` is enabled.

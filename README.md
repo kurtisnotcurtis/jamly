@@ -35,7 +35,7 @@ Self-contained archives for **macOS** (Apple Silicon & Intel), **Windows x64**, 
 3. Jamly opens your browser to the local companion page automatically:
    - Paste a track URL or local file path—or click **Choose files** to upload audio from your computer.
    - Pick a **Preset** and **Format** (`MP3` or `WAV`), then click **Split drums**.
-   - Click **Show files** to open the folder on disk, or **Save a copy** to download directly in your browser.
+   - Click **Open export folder** (or a track's folder icon) to open files on disk, click any stem download button to save a copy in your browser, or use **Clear list** / **Rescan folder** to manage the Exports list.
 
 *(Closing the browser tab does not interrupt running jobs; reopen `Jamly` anytime to reconnect, or click **Quit companion** to stop the background worker. Note: preview builds are unsigned, so macOS Gatekeeper or Windows SmartScreen may prompt on first launch.)*
 
@@ -168,7 +168,7 @@ jamly-service install --audio-format wav --output-dir "/path/to/music" --port 87
 
 ### Updating Jamly
 
-- **Desktop package**: Click **Quit companion**, replace the extracted folder/`Jamly.app` with the new release archive, and launch it again. Your queue, settings, and exports are stored outside the application directory and are preserved.
+- **Desktop package**: Click **Quit companion**, then run `brew upgrade --cask kurtisnotcurtis/tap/jamly` (macOS), `winget upgrade kurtisnotcurtis.Jamly` (Windows), or replace the extracted folder/`Jamly.app` with the new release archive and launch it again. Your queue, settings, and exports are stored outside the application directory and are preserved.
 - **CLI install**:
   ```sh
   uv tool upgrade jamly-audio-sep
@@ -195,6 +195,8 @@ The local backend speaks **API version 3** on `127.0.0.1`. All job, settings, up
 | `POST /app/upload?name=song.wav` | Stream raw audio bytes (`audio/*` or `application/octet-stream`) into private state and return its local path |
 | `POST /settings` | Persist default `model`, `stem`, `audio_format`, and `output_dir` |
 | `POST /retry/<id>` | `{"replace_existing":false}` |
+| `POST /app/clear` | Remove one finished/failed job (`{"id":"<id>"}`) or all terminal jobs (`{}`) from the list (keeps files on disk) |
+| `POST /app/rescan` | Scan `output_dir/.jamly` manifests and repopulate missing exports into the list |
 | `GET /outputs/<id>/<kind>?generation=...` | Download an exported stem (`drums`, `no_drums`, `vocals`, `no_vocals`, etc.) or `metadata` for a completed generation |
 
 </details>

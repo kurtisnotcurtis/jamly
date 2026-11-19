@@ -145,6 +145,88 @@ class WatchQueue:
         self._items = [item for item in self._items if item["watch_id"] != watch_id]
         return len(self._items) != before
 
+    def clear_terminal(self) -> int:
+        before = len(self._items)
+        self._items = [item for item in self._items if item["status"] in ("pending", "running")]
+        return before - len(self._items)
+
+    @staticmethod
+    def _export_key(model: str, stem: str, audio_format: str) -> str:
+        return (
+            "%s/%s" % (model, audio_format)
+            if stem == "drums"
+            else "%s/%s/%s" % (model, stem, audio_format)
+        )
+
+    def restore_export(
+        self,
+        watch_id: str,
+        *,
+        source_url: str | None = None,
+        title: str | None = None,
+        model: str = "htdemucs",
+        stem: str = "drums",
+        audio_format: str = "mp3",
+        outputs: dict[str, str],
+        generation: str,
+    ) -> bool:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", watch_id):
+            raise ValueError("invalid stable id")
+        export_key = self._export_key(model, stem, audio_format)
+        entry = {
+            "model": model,
+            "stem": stem,
+            "audio_format": audio_format,
+            "outputs": dict(outputs),
+            "generation": generation,
+        }
+        existing = next((item for item in self._items if item["watch_id"] == watch_id), None)
+        if existing is None:
+            self._items.append({
+                "watch_id": watch_id,
+                "source_url": source_url or watch_id,
+                "title": title,
+                "status": "done",
+                "error": None,
+                "outputs": dict(outputs),
+                "generation": generation,
+                "exports": {export_key: entry},
+                "options": {"model": model, "stem": stem, "audio_format": audio_format},
+                "attempts": 1,
+                "updated_at": time.time(),
+            })
+            return True
+        changed = False
+        exports = dict(existing.get("exports") or {})
+        if exports.get(export_key) != entry:
+            exports[export_key] = entry
+            existing["exports"] = exports
+            changed = True
+        if title and not existing.get("title"):
+            existing["title"] = title
+            changed = True
+        if source_url and existing.get("source_url") == watch_id and source_url != watch_id:
+            existing["source_url"] = source_url
+            changed = True
+        if existing["status"] not in ("pending", "running"):
+            opts = existing.get("options") or {}
+            same_selection = (
+                opts.get("model", "htdemucs") == model
+                and opts.get("stem", "drums") == stem
+                and opts.get("audio_format", "mp3") == audio_format
+            )
+            if not existing.get("outputs") or (same_selection and existing.get("generation") != generation):
+                existing.update(
+                    status="done",
+                    error=None,
+                    outputs=dict(outputs),
+                    generation=generation,
+                    options={"model": model, "stem": stem, "audio_format": audio_format},
+                    updated_at=time.time(),
+                )
+                changed = True
+        return changed
+
     def mark_running(self, watch_id: str) -> None:
         self.finish(watch_id, "running")
         for item in self._items:
@@ -170,11 +252,7 @@ class WatchQueue:
                     stem = opts.get("stem", "drums")
                     audio_format = opts.get("audio_format", "mp3")
                     exports = dict(item.get("exports") or {})
-                    export_key = (
-                        "%s/%s" % (model, audio_format)
-                        if stem == "drums"
-                        else "%s/%s/%s" % (model, stem, audio_format)
-                    )
+                    export_key = self._export_key(model, stem, audio_format)
                     exports[export_key] = {
                         "model": model,
                         "stem": stem,

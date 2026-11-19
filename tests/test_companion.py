@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from jamly import companion, runtime
+from jamly import companion, companion_ui, runtime
 
 
 class CompanionLauncherTests(unittest.TestCase):
@@ -53,3 +53,18 @@ class CompanionLauncherTests(unittest.TestCase):
             self.assertEqual(saved, [{
                 "model": "htdemucs_ft", "output_dir": str(Path("relative-exports").absolute()),
             }])
+
+    def test_companion_ui_serves_favicon_and_allows_self_images_in_csp(self):
+        with tempfile.TemporaryDirectory() as root:
+            ui = companion_ui.CompanionUI(Path(root), enabled=True)
+            html_bytes, html_type = ui.asset("/app/")
+            icon_bytes, icon_type = ui.asset("/app/jamly.svg")
+            repo_icon = Path(__file__).resolve().parents[1] / "site" / "jamly-mark.svg"
+            self.assertEqual(html_type, "text/html; charset=utf-8")
+            self.assertIn(b'<link rel="icon" href="/app/jamly.svg" type="image/svg+xml">', html_bytes)
+            self.assertIn("img-src 'self'", companion_ui.CSP)
+            self.assertEqual(icon_type, "image/svg+xml")
+            self.assertEqual(
+                icon_bytes.decode("utf-8").replace("\r\n", "\n"),
+                repo_icon.read_text(encoding="utf-8").replace("\r\n", "\n"),
+            )

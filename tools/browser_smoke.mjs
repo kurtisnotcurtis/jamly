@@ -222,7 +222,7 @@ try {
   }, "real Higher quality export", 600000);
   for (const kind of ["drums", "drumless"]) {
     await cdp.evaluate(`Array.from(document.querySelectorAll("#jobs button"))
-      .find(button => button.textContent === ${JSON.stringify("Save a copy: " + kind)}).click()`);
+      .find(button => button.getAttribute("aria-label") === ${JSON.stringify("Save a copy: " + kind)}).click()`);
   }
   await waitFor(async () => {
     const files = await fs.readdir(downloads);

@@ -193,5 +193,44 @@ class RecoveryTests(unittest.TestCase):
             with queue_owner(path):
                 pass
 
+    def test_clear_terminal_preserves_active_and_restore_export_repopulates(self):
+        queue = WatchQueue()
+        queue.add("active")
+        queue.mark_running("active")
+        queue.add("finished", source_url="https://youtu.be/finished")
+        queue.finish("finished", "done", outputs={"drums": "/out/d.mp3"}, generation="gen-1")
+        queue.add("failed")
+        queue.finish("failed", "error", error="boom")
+
+        removed = queue.clear_terminal()
+        self.assertEqual(removed, 2)
+        self.assertEqual([item["watch_id"] for item in queue.items], ["active"])
+
+        changed = queue.restore_export(
+            "finished",
+            source_url="https://youtu.be/finished",
+            title="Finished Song",
+            model="htdemucs_ft",
+            stem="vocals",
+            audio_format="wav",
+            outputs={"vocals": "/out/v.wav", "no_vocals": "/out/nv.wav", "metadata": "/out/.jamly/finished/meta.json"},
+            generation="gen-2",
+        )
+        self.assertTrue(changed)
+        restored = queue.get("finished")
+        self.assertEqual(restored["status"], "done")
+        self.assertEqual(restored["title"], "Finished Song")
+        self.assertIn("htdemucs_ft/vocals/wav", restored["exports"])
+        self.assertFalse(queue.restore_export(
+            "finished",
+            source_url="https://youtu.be/finished",
+            title="Finished Song",
+            model="htdemucs_ft",
+            stem="vocals",
+            audio_format="wav",
+            outputs={"vocals": "/out/v.wav", "no_vocals": "/out/nv.wav", "metadata": "/out/.jamly/finished/meta.json"},
+            generation="gen-2",
+        ))
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

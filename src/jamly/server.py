@@ -159,23 +159,102 @@ class ItemServer:
                 setattr(self.args, key, value)
             return current
 
-    def show_folder(self, wid: str | None = None) -> None:
+    def show_folder(self, wid: str | None = None, *, target: str = "output") -> None:
+        if target not in ("output", "source"):
+            raise ValueError("Folder target must be output or source")
         with self._status_lock:
             if wid is None:
+                if target != "output":
+                    raise ValueError("Source folder requires a job id")
                 directory = Path(self.args.output_dir)
                 directory.mkdir(parents=True, exist_ok=True)
             else:
                 item = self.queue.get(wid)
-                meta_path = (item or {}).get("outputs", {}).get("metadata")
-                if not meta_path and item:
-                    for exp in reversed(list((item.get("exports") or {}).values())):
-                        if exp.get("outputs", {}).get("metadata"):
-                            meta_path = exp["outputs"]["metadata"]
-                            break
-                if not meta_path:
-                    raise ValueError("This job has no completed export")
-                directory = audio_directory(Path(meta_path).parent)
+                if target == "source":
+                    source = (item or {}).get("source_url")
+                    if not source:
+                        raise ValueError("This job has no recorded source")
+                    scheme = urlsplit(source).scheme.lower()
+                    if scheme in ("http", "https"):
+                        raise ValueError("Remote URLs do not have a local source folder")
+                    source_path = Path(source)
+                    if not source_path.exists():
+                        raise ValueError("The original local audio file no longer exists")
+                    directory = source_path if source_path.is_dir() else source_path.parent
+                else:
+                    meta_path = (item or {}).get("outputs", {}).get("metadata")
+                    if not meta_path and item:
+                        for exp in reversed(list((item.get("exports") or {}).values())):
+                            if exp.get("outputs", {}).get("metadata"):
+                                meta_path = exp["outputs"]["metadata"]
+                                break
+                    if not meta_path:
+                        raise ValueError("This job has no completed export")
+                    directory = audio_directory(Path(meta_path).parent)
         open_directory(directory)
+
+    def clear_jobs(self, wid: str | None = None) -> int:
+        with self._status_lock:
+            if self._error or self._stop.is_set():
+                raise QueueError(self._error or "Server is shutting down")
+            if wid is not None:
+                item = self.queue.get(wid)
+                if item is None:
+                    raise KeyError(wid)
+                if item["status"] in ("pending", "running"):
+                    raise ValueError("Cannot remove a queued or running job from the list")
+                return int(self._commit(lambda queue: queue.remove(wid)))
+            if not any(item["status"] not in ("pending", "running") for item in self.queue.items):
+                return 0
+            return self._commit(lambda queue: queue.clear_terminal())
+
+    def rescan_exports(self) -> int:
+        with self._status_lock:
+            if self._error or self._stop.is_set():
+                raise QueueError(self._error or "Server is shutting down")
+            meta_root = Path(self.args.output_dir) / ".jamly"
+            if not meta_root.is_dir():
+                return 0
+            discovered = []
+            for meta_path in sorted(meta_root.rglob("metadata.json")):
+                rel_parts = meta_path.relative_to(meta_root).parts
+                if any(part.startswith(".") for part in rel_parts):
+                    continue
+                try:
+                    manifest = read_manifest(meta_path.parent, verify_hashes=False)
+                except (OSError, ValueError):
+                    continue
+                wid = manifest.get("watch_id") or rel_parts[0]
+                if not isinstance(wid, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", wid):
+                    continue
+                model = manifest.get("model", DEFAULT_MODEL)
+                stem = manifest.get("stem", DEFAULT_STEM)
+                audio_format = manifest.get("format")
+                if audio_format not in ("mp3", "wav"):
+                    audio_format = meta_path.parent.name if meta_path.parent.name in ("mp3", "wav") else "mp3"
+                outputs = {
+                    kind: str(resolve_output_path(meta_path.parent, rec["file"]))
+                    for kind, rec in manifest["outputs"].items()
+                }
+                outputs["metadata"] = str(meta_path)
+                discovered.append({
+                    "watch_id": wid,
+                    "source_url": manifest.get("source_url") or wid,
+                    "title": manifest.get("title"),
+                    "model": model,
+                    "stem": stem,
+                    "audio_format": audio_format,
+                    "outputs": outputs,
+                    "generation": manifest["generation"],
+                })
+            if not discovered:
+                return 0
+            candidate = self.queue.copy()
+            restored = sum(int(candidate.restore_export(**entry)) for entry in discovered)
+            if restored:
+                candidate.save()
+                self.queue = candidate
+            return restored
 
     def _commit(self, change):
         candidate = self.queue.copy()
@@ -609,10 +688,24 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
                     self._json({"stopping": True})
                     threading.Thread(target=self.app.stop, name="jamly-stop", daemon=True).start()
                 else:
-                    if set(payload) - {"id"} or ("id" in payload and not isinstance(payload["id"], str)):
-                        raise ValueError("Open folder accepts only an optional job id")
-                    self.app.show_folder(payload.get("id"))
+                    if set(payload) - {"id", "target"} or ("id" in payload and not isinstance(payload["id"], str)):
+                        raise ValueError("Open folder accepts only an optional job id and target")
+                    if "target" in payload and payload["target"] not in ("output", "source"):
+                        raise ValueError("Folder target must be output or source")
+                    self.app.show_folder(payload.get("id"), target=payload.get("target", "output"))
                     self._json({"opened": True})
+                return
+            if path == "/app/clear":
+                if set(payload) - {"id"} or ("id" in payload and not isinstance(payload["id"], str)):
+                    raise ValueError("Clear accepts only an optional job id")
+                removed = self.app.clear_jobs(payload.get("id"))
+                self._json({"removed": removed, "pending_count": self.app.snapshot()["pending"]})
+                return
+            if path == "/app/rescan":
+                if payload:
+                    raise ValueError("Rescan takes no options")
+                restored = self.app.rescan_exports()
+                self._json({"restored": restored, "total": self.app.snapshot()["total"]})
                 return
             if path == "/add":
                 if set(payload) - {"inputs", "titles", "replace_existing", "model", "audio_format", "stem"}:
