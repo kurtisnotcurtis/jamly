@@ -449,7 +449,7 @@ class ServerTests(unittest.TestCase):
         with patch.object(server, "open_directory") as mocked_open:
             code, _, _ = self.request("POST", "/app/open-folder", {"id": local_wid, "target": "source"})
             self.assertEqual(code, 200)
-            mocked_open.assert_called_once_with(local_file.parent)
+            mocked_open.assert_called_once_with(local_file.parent.resolve())
 
 
 class HostTests(unittest.TestCase):
