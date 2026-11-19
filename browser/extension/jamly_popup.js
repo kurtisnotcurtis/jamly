@@ -192,6 +192,6 @@
       byId("submit").disabled = false;
     }
   });
-  window.addEventListener("unload", () => { closed = true; clearTimeout(timer); });
+  window.addEventListener("pagehide", () => { closed = true; clearTimeout(timer); });
   refresh();
 })();

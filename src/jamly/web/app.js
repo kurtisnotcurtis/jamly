@@ -318,6 +318,9 @@
     clearTimeout(timer);
     if (!document.hidden) refresh();
   });
-  window.addEventListener("unload", () => { stopped = true; clearTimeout(timer); });
+  window.addEventListener("pagehide", (event) => {
+    clearTimeout(timer);
+    if (!event.persisted) stopped = true;
+  });
   refresh();
 })();
