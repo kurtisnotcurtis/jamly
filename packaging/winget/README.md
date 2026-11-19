@@ -17,3 +17,10 @@ These templates are used by [`.github/workflows/companions.yml`](../../.github/w
 4. Submit a PR to `microsoft/winget-pkgs` under:
    `manifests/k/kurtisnotcurtis/Jamly/<version>/`
    (or run `wingetcreate submit .\kurtisnotcurtis.Jamly\<version>\`).
+
+## Automating on Tagged Releases
+
+[`.github/workflows/companions.yml`](../../.github/workflows/companions.yml) automatically runs `wingetcreate submit` on `v*` tags when `WINGET_TOKEN` is configured:
+
+1. Create a **classic** GitHub Personal Access Token with the `public_repo` scope (`wingetcreate` does not support fine-grained tokens).
+2. In `kurtisnotcurtis/jamly` **Settings → Secrets and variables → Actions → Secrets**, add it as `WINGET_TOKEN`.

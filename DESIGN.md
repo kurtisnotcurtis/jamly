@@ -168,5 +168,6 @@ suites, commit on `main`, and push an annotated `vX.Y.Z` tag. Tag pushes trigger
 which verifies the tag against `tools/version.py`, builds and smoke-tests the four desktop companion
 archives alongside their corresponding native source archives, renders release manifests for WinGet,
 AUR (`jamly-bin`), and the Homebrew Tap, packages the browser extension and userscript, writes
-`SHA256SUMS.txt`, and publishes the GitHub Release; `pypi.yml` publishes `jamly-audio-sep` to PyPI
-via Trusted Publishing when `PYPI_PUBLISH_ENABLED` is enabled.
+`SHA256SUMS.txt`, and publishes the GitHub Release; configured repository secrets then push or submit
+updated manifests to the Homebrew Tap, AUR (`jamly-bin`), and `microsoft/winget-pkgs`, while `pypi.yml`
+publishes `jamly-audio-sep` to PyPI via Trusted Publishing when `PYPI_PUBLISH_ENABLED` is enabled.

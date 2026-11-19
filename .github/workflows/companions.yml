@@ -175,7 +175,7 @@ jobs:
           render_winget_manifests(
               version,
               sha256_file(win_zip).upper(),
-              Path("dist/winget"),
+              Path("dist/manifests/winget"),
               zip_path=release_dir / f"winget-manifests-{version}.zip",
           )
 
@@ -183,7 +183,7 @@ jobs:
           render_aur_package(
               version,
               sha256_file(linux_tar),
-              Path("dist/aur"),
+              Path("dist/manifests/aur"),
               zip_path=release_dir / f"aur-jamly-bin-{version}.zip",
           )
 
@@ -193,7 +193,7 @@ jobs:
               version,
               sha256_file(mac_arm64_zip),
               sha256_file(mac_x86_64_zip),
-              Path("dist/homebrew"),
+              Path("dist/manifests/homebrew"),
               zip_path=release_dir / f"homebrew-tap-{version}.zip",
           )
 
@@ -204,6 +204,12 @@ jobs:
                   checksum_lines.append(f"{digest}  {asset.name}\n")
           (release_dir / "SHA256SUMS.txt").write_text("".join(checksum_lines), encoding="utf-8")
           PY
+      - name: Upload rendered package manifests
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: package-manifests
+          path: dist/manifests
+          retention-days: 7
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -215,3 +221,110 @@ jobs:
               --title "Jamly ${GITHUB_REF_NAME}" \
               --generate-notes
           fi
+
+  publish-homebrew:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Download rendered manifests
+        if: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY != '' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: package-manifests
+          path: manifests
+      - name: Push cask to kurtisnotcurtis/homebrew-tap
+        if: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY != '' }}
+        env:
+          DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION#v}"
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "${DEPLOY_KEY}" > ~/.ssh/homebrew_tap
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i ${HOME}/.ssh/homebrew_tap -o IdentitiesOnly=yes"
+          git clone git@github.com:kurtisnotcurtis/homebrew-tap.git tap-repo
+          mkdir -p tap-repo/Casks
+          cp manifests/homebrew/Casks/jamly.rb tap-repo/Casks/jamly.rb
+          cd tap-repo
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add Casks/jamly.rb
+            git commit -m "jamly ${VERSION}"
+            git push origin HEAD:main
+          fi
+      - name: Clean up SSH key
+        if: always()
+        run: rm -f ~/.ssh/homebrew_tap
+
+  publish-aur:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Download rendered manifests
+        if: ${{ secrets.AUR_SSH_PRIVATE_KEY != '' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: package-manifests
+          path: manifests
+      - name: Push jamly-bin to AUR
+        if: ${{ secrets.AUR_SSH_PRIVATE_KEY != '' }}
+        env:
+          AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION#v}"
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "${AUR_KEY}" > ~/.ssh/aur
+          ssh-keyscan -H aur.archlinux.org >> ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i ${HOME}/.ssh/aur -o IdentitiesOnly=yes"
+          git clone ssh://aur@aur.archlinux.org/jamly-bin.git aur-repo
+          cp manifests/aur/jamly-bin/PKGBUILD manifests/aur/jamly-bin/.SRCINFO \
+             manifests/aur/jamly-bin/jamly.desktop manifests/aur/jamly-bin/jamly.svg aur-repo/
+          cd aur-repo
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add PKGBUILD .SRCINFO jamly.desktop jamly.svg
+            git commit -m "jamly-bin: release ${VERSION}"
+            git push origin HEAD:master
+          fi
+      - name: Clean up SSH key
+        if: always()
+        run: rm -f ~/.ssh/aur
+
+  publish-winget:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download rendered manifests
+        if: ${{ secrets.WINGET_TOKEN != '' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: package-manifests
+          path: manifests
+      - name: Submit PR to microsoft/winget-pkgs
+        if: ${{ secrets.WINGET_TOKEN != '' }}
+        shell: pwsh
+        env:
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ver = $env:VERSION.TrimStart('v')
+          Invoke-WebRequest -Uri "https://aka.ms/wingetcreate/latest" -OutFile "wingetcreate.exe"
+          .\wingetcreate.exe submit ".\manifests\winget\kurtisnotcurtis.Jamly\$ver\"

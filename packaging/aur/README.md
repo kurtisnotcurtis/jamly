@@ -27,3 +27,10 @@ These templates are used by [`.github/workflows/companions.yml`](../../.github/w
    git commit -m "jamly-bin: release <version>"
    git push origin master
    ```
+
+## Automating on Tagged Releases
+
+[`.github/workflows/companions.yml`](../../.github/workflows/companions.yml) automatically pushes `jamly-bin` on `v*` tags when `AUR_SSH_PRIVATE_KEY` is configured:
+
+1. Generate an SSH key pair (`ssh-keygen -t ed25519 -N "" -f aur_deploy`) and add the public key to your account on [aur.archlinux.org](https://aur.archlinux.org/).
+2. In `kurtisnotcurtis/jamly` **Settings → Secrets and variables → Actions → Secrets**, add `AUR_SSH_PRIVATE_KEY` containing the private key.

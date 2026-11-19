@@ -22,3 +22,11 @@ A personal Homebrew tap is used while `Jamly.app` remains an unsigned, unnotariz
    ```sh
    brew install --cask kurtisnotcurtis/tap/jamly
    ```
+
+## Automating on Tagged Releases
+
+[`.github/workflows/companions.yml`](../../.github/workflows/companions.yml) automatically updates `kurtisnotcurtis/homebrew-tap` on `v*` tags when `HOMEBREW_TAP_DEPLOY_KEY` is configured:
+
+1. Generate an SSH deploy key pair (`ssh-keygen -t ed25519 -N "" -f homebrew_tap_deploy`).
+2. In `kurtisnotcurtis/homebrew-tap` **Settings → Deploy keys**, add `homebrew_tap_deploy.pub` with **Allow write access** enabled.
+3. In `kurtisnotcurtis/jamly` **Settings → Secrets and variables → Actions → Secrets**, add `HOMEBREW_TAP_DEPLOY_KEY` containing the private key.
