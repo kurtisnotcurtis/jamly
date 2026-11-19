@@ -414,7 +414,13 @@ class ServerTests(unittest.TestCase):
         self.start(process)
         output_root = self.root / "output"
         self.request("POST", "/add", {"inputs": [self.source]})
-        self.wait_for(lambda state: state["done"] == 1)
+        done_state = self.wait_for(lambda state: state["done"] == 1)
+        done_job = done_state["jobs"][0]
+        self.assertIsInstance(done_job["requested_at"], float)
+        self.assertIsInstance(done_job["started_at"], float)
+        self.assertIsInstance(done_job["finished_at"], float)
+        self.assertIsInstance(done_job["duration_seconds"], float)
+        self.assertGreaterEqual(done_job["duration_seconds"], 0.0)
 
         with patch.object(server, "open_directory") as mocked_open:
             code, _, _ = self.request("POST", "/app/open-folder", {"id": self.wid, "target": "source"})

@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 from jamly.watch_queue import QueueError, WatchQueue, default_queue_path, queue_owner
@@ -231,6 +232,32 @@ class RecoveryTests(unittest.TestCase):
             outputs={"vocals": "/out/v.wav", "no_vocals": "/out/nv.wav", "metadata": "/out/.jamly/finished/meta.json"},
             generation="gen-2",
         ))
+
+    def test_job_records_requested_started_finished_and_duration(self):
+        with patch("jamly.watch_queue.time.time", return_value=100.0) as clock:
+            queue = WatchQueue()
+            queue.add("job")
+            added = queue.get("job")
+            self.assertEqual(added["requested_at"], 100.0)
+            self.assertIsNone(added["started_at"])
+            self.assertIsNone(added["finished_at"])
+            self.assertIsNone(added["duration_seconds"])
+            clock.return_value = 105.0
+            queue.mark_running("job")
+            running = queue.get("job")
+            self.assertEqual(running["started_at"], 105.0)
+            clock.return_value = 117.5
+            queue.finish("job", "done", outputs={"drums": "/out/d.mp3"}, generation="gen-1")
+            done = queue.get("job")
+            self.assertEqual(done["finished_at"], 117.5)
+            self.assertEqual(done["duration_seconds"], 12.5)
+            clock.return_value = 200.0
+            self.assertTrue(queue.add("job", retry=True))
+            retried = queue.get("job")
+            self.assertEqual(retried["requested_at"], 200.0)
+            self.assertIsNone(retried["started_at"])
+            self.assertIsNone(retried["finished_at"])
+            self.assertIsNone(retried["duration_seconds"])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

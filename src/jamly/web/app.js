@@ -87,6 +87,50 @@
     return labels[kind] || kind;
   }
 
+  function formatTime(epochSeconds) {
+    if (typeof epochSeconds !== "number" || !Number.isFinite(epochSeconds)) return "";
+    return new Date(epochSeconds * 1000).toLocaleString([], {
+      month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+    });
+  }
+
+  function formatDuration(seconds) {
+    if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) return "";
+    if (seconds < 1) return "<1s";
+    const total = Math.round(seconds);
+    if (total < 60) return `${total}s`;
+    const mins = Math.floor(total / 60);
+    const secs = total % 60;
+    if (mins < 60) return secs ? `${mins}m ${secs}s` : `${mins}m`;
+    const hours = Math.floor(mins / 60);
+    const remMins = mins % 60;
+    return remMins ? `${hours}h ${remMins}m` : `${hours}h`;
+  }
+
+  function formatJobTimes(job, status, isCurrent) {
+    const parts = [];
+    if (typeof job.requested_at === "number") {
+      parts.push(`Requested ${formatTime(job.requested_at)}`);
+    }
+    if (!["pending", "running"].includes(job.status) && typeof job.finished_at === "number") {
+      parts.push(`Finished ${formatTime(job.finished_at)}`);
+    }
+    if (!["pending", "running"].includes(job.status) && typeof job.duration_seconds === "number") {
+      parts.push(`Took ${formatDuration(job.duration_seconds)}`);
+    } else if (isCurrent || job.status === "running") {
+      const startedAt = typeof job.started_at === "number"
+        ? job.started_at
+        : (isCurrent && typeof status.current?.started_at === "number" ? status.current.started_at : null);
+      if (startedAt !== null) {
+        parts.push(`Elapsed ${formatDuration(Math.max(0, Date.now() / 1000 - startedAt))}`);
+      }
+    }
+    if (!parts.length && typeof job.updated_at === "number") {
+      parts.push(`Updated ${formatTime(job.updated_at)}`);
+    }
+    return parts.join(" · ");
+  }
+
   function settings() {
     const result = {
       model: byId("model").value, audio_format: byId("format").value,
@@ -293,6 +337,13 @@
       const stemTag = job.stem && job.stem !== "drums" ? ` | ${job.stem}` : "";
       detail.textContent = `${stages[stage] || stage}${progressText} | ${model}${stemTag} | ${job.audio_format.toUpperCase()}`;
       info.appendChild(detail);
+      const timingText = formatJobTimes(job, status, isCurrent);
+      if (timingText) {
+        const times = document.createElement("p");
+        times.className = "job-times";
+        times.textContent = timingText;
+        info.appendChild(times);
+      }
       if (job.error) {
         const error = document.createElement("p");
         error.className = "error";

@@ -105,6 +105,7 @@ class WatchQueue:
     def add(self, watch_id: str, title=None, source_url=None, *, retry=False, options=None) -> bool:
         if not re.fullmatch(r"[A-Za-z0-9_-]+", watch_id):
             raise ValueError("invalid stable id")
+        now = time.time()
         previous = next((item for item in self._items if item["watch_id"] == watch_id), None)
         if previous is not None:
             if previous["status"] in ("pending", "running") or not retry:
@@ -112,7 +113,8 @@ class WatchQueue:
             previous.update(status="pending", error=None, outputs={}, generation=None,
                             source_url=source_url or previous["source_url"],
                             options=copy.deepcopy(options if options is not None else previous["options"]),
-                            updated_at=time.time())
+                            requested_at=now, started_at=None, finished_at=None,
+                            duration_seconds=None, updated_at=now)
             if title:
                 previous["title"] = title
             return True
@@ -120,7 +122,8 @@ class WatchQueue:
             "watch_id": watch_id, "source_url": source_url or watch_id, "title": title,
             "status": "pending", "error": None, "outputs": {}, "exports": {},
             "options": copy.deepcopy(options or {}),
-            "attempts": 0, "updated_at": time.time(),
+            "attempts": 0, "requested_at": now, "started_at": None,
+            "finished_at": None, "duration_seconds": None, "updated_at": now,
         })
         return True
 
@@ -169,6 +172,7 @@ class WatchQueue:
         audio_format: str = "mp3",
         outputs: dict[str, str],
         generation: str,
+        finished_at: float | None = None,
     ) -> bool:
         if not re.fullmatch(r"[A-Za-z0-9_-]+", watch_id):
             raise ValueError("invalid stable id")
@@ -193,7 +197,11 @@ class WatchQueue:
                 "exports": {export_key: entry},
                 "options": {"model": model, "stem": stem, "audio_format": audio_format},
                 "attempts": 1,
-                "updated_at": time.time(),
+                "requested_at": None,
+                "started_at": None,
+                "finished_at": finished_at,
+                "duration_seconds": None,
+                "updated_at": finished_at or time.time(),
             })
             return True
         changed = False
@@ -207,6 +215,9 @@ class WatchQueue:
             changed = True
         if source_url and existing.get("source_url") == watch_id and source_url != watch_id:
             existing["source_url"] = source_url
+            changed = True
+        if finished_at and existing.get("finished_at") is None and existing["status"] in ("done", "skipped"):
+            existing["finished_at"] = finished_at
             changed = True
         if existing["status"] not in ("pending", "running"):
             opts = existing.get("options") or {}
@@ -222,24 +233,40 @@ class WatchQueue:
                     outputs=dict(outputs),
                     generation=generation,
                     options={"model": model, "stem": stem, "audio_format": audio_format},
-                    updated_at=time.time(),
+                    finished_at=finished_at if finished_at is not None else existing.get("finished_at"),
+                    updated_at=finished_at or time.time(),
                 )
                 changed = True
         return changed
 
     def mark_running(self, watch_id: str) -> None:
         self.finish(watch_id, "running")
+        now = time.time()
         for item in self._items:
             if item["watch_id"] == watch_id:
                 item["attempts"] = item.get("attempts", 0) + 1
+                item["started_at"] = now
+                item["finished_at"] = None
+                item["duration_seconds"] = None
+                if item.get("requested_at") is None:
+                    item["requested_at"] = now
 
     def finish(self, watch_id: str, status: str, *, error=None, outputs=None,
                title=None, generation=None) -> None:
         if status not in self.STATUSES:
             raise ValueError("unknown job status")
+        now = time.time()
         for item in self._items:
             if item["watch_id"] == watch_id:
-                item.update(status=status, error=error, updated_at=time.time())
+                item.update(status=status, error=error, updated_at=now)
+                if status in ("done", "skipped", "error", "cancelled"):
+                    item["finished_at"] = now
+                    started = item.get("started_at")
+                    item["duration_seconds"] = (
+                        round(max(0.0, now - started), 2)
+                        if isinstance(started, (int, float))
+                        else None
+                    )
                 if outputs is not None:
                     item["outputs"] = dict(outputs)
                 if title:

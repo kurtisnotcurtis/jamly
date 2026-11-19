@@ -170,6 +170,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-color: rgba(255, 182, 182, 0.35);
 }
 .job-detail { color: var(--muted); font-size: 13px; }
+.job-times { color: var(--muted); font-size: 12px; opacity: 0.88; }
 .job-actions {
   display: flex;
   flex-wrap: wrap;

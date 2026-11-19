@@ -246,6 +246,7 @@ class ItemServer:
                     "audio_format": audio_format,
                     "outputs": outputs,
                     "generation": manifest["generation"],
+                    "finished_at": meta_path.stat().st_mtime,
                 })
             if not discovered:
                 return 0
@@ -310,8 +311,10 @@ class ItemServer:
             item = pending[0]
             wid = item["watch_id"]
             self._commit(lambda queue: queue.mark_running(wid))
+            running = self.queue.get(wid) or {}
             self._current = {"watch_id": wid, "stage": "metadata", "status": "running",
-                             "title": item.get("title"), "error": None, "progress": None}
+                             "title": item.get("title"), "error": None, "progress": None,
+                             "started_at": running.get("started_at")}
 
         def progress(_wid, stage, index, total):
             with self._status_lock:
@@ -355,7 +358,8 @@ class ItemServer:
             jobs = []
             for item in reversed(visible):
                 record = {key: item.get(key) for key in (
-                    "watch_id", "title", "source_url", "status", "error", "attempts", "updated_at"
+                    "watch_id", "title", "source_url", "status", "error", "attempts",
+                    "requested_at", "started_at", "finished_at", "duration_seconds", "updated_at",
                 )}
                 record["outputs"] = []
                 record["exports"] = []

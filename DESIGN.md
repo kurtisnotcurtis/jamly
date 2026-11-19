@@ -64,7 +64,7 @@ The CLI or backend holds an exclusive process lock for the lifetime of queue own
 standalone CLI/backend writers are refused rather than silently overwriting one another. Revision
 checks also reject stale direct saves.
 
-Job records retain the stable id, source URL, options, status, attempts, error and output generation.
+Job records retain the stable id, source URL, options, status, attempts, timestamps/duration, error and output generation.
 States are `pending`, `running`, `done`, `skipped`, `error`, and `cancelled`. A legacy JSON done-set
 is readable, but new error records are not treated as successful completions.
 
@@ -81,7 +81,9 @@ Queue persistence errors are exposed, not converted into successful acceptance.
 
 API version 3 uses finite JSON snapshots. The backend owns all durable state. The local companion page
 polls while visible; the extension service worker handles requests on demand and its popup polls while
-open. Neither browser page owns the inference process.
+open. Neither browser page owns the inference process. The Exports list can clear finished/failed
+entries without removing audio files on disk, and can rescan `<output>/.jamly/` manifests to
+repopulate saved exports.
 
 `companion` serializes launches, checks for the authenticated backend associated with its queue,
 and reconnects or starts a separate process. The backend publishes a private instance descriptor.
