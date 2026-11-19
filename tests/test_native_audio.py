@@ -33,9 +33,18 @@ def _load_winget_tool():
     return module
 
 
+def _load_icon_tool():
+    path = Path(__file__).resolve().parents[1] / "tools" / "generate_icons.py"
+    spec = importlib.util.spec_from_file_location("jamly_tools_generate_icons", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 native_audio = _load_native_audio()
 version_tool = _load_version_tool()
 winget_tool = _load_winget_tool()
+icon_tool = _load_icon_tool()
 
 PAYLOAD = b"fake checksum-pinned source archive"
 URL = "https://example.com/openssl.tar.gz"
@@ -212,6 +221,89 @@ class WingetManifestTests(unittest.TestCase):
                     "kurtisnotcurtis.Jamly/0.1.0/kurtisnotcurtis.Jamly.yaml",
                 ],
             )
+
+
+class BundleIconTests(unittest.TestCase):
+    def test_ico_contains_valid_multi_resolution_entries(self):
+        import struct
+
+        ico_path = Path(__file__).resolve().parents[1] / "tools" / "jamly.ico"
+        self.assertTrue(ico_path.is_file())
+        data = ico_path.read_bytes()
+        reserved, ico_type, count = struct.unpack_from("<HHH", data, 0)
+        self.assertEqual(reserved, 0)
+        self.assertEqual(ico_type, 1)
+        self.assertEqual(count, len(icon_tool.ICO_SIZES))
+
+        sizes = []
+        for index in range(count):
+            width, height, _cc, _res, planes, bpp, byte_len, offset = struct.unpack_from(
+                "<BBBBHHII", data, 6 + index * 16,
+            )
+            self.assertEqual(width, height)
+            self.assertEqual(planes, 1)
+            self.assertEqual(bpp, 32)
+            self.assertGreater(byte_len, 0)
+            self.assertLessEqual(offset + byte_len, len(data))
+            actual_size = 256 if width == 0 else width
+            sizes.append(actual_size)
+            payload = data[offset:offset + byte_len]
+            if actual_size >= 256:
+                self.assertEqual(payload[:8], b"\x89PNG\r\n\x1a\n")
+            else:
+                self.assertEqual(struct.unpack_from("<I", payload, 0)[0], 40)
+        self.assertEqual(tuple(sizes), icon_tool.ICO_SIZES)
+
+    def test_icns_contains_valid_png_chunks(self):
+        import struct
+
+        icns_path = Path(__file__).resolve().parents[1] / "tools" / "jamly.icns"
+        self.assertTrue(icns_path.is_file())
+        data = icns_path.read_bytes()
+        magic, total_len = struct.unpack_from(">4sI", data, 0)
+        self.assertEqual(magic, b"icns")
+        self.assertEqual(total_len, len(data))
+
+        tags = []
+        pos = 8
+        while pos < len(data):
+            tag, chunk_len = struct.unpack_from(">4sI", data, pos)
+            self.assertGreater(chunk_len, 16)
+            self.assertLessEqual(pos + chunk_len, len(data))
+            self.assertEqual(data[pos + 8:pos + 16], b"\x89PNG\r\n\x1a\n")
+            tags.append(tag)
+            pos += chunk_len
+        self.assertEqual(pos, len(data))
+        self.assertEqual(tuple(tags), tuple(tag for tag, _size in icon_tool.ICNS_CHUNKS))
+
+    def test_jamly_spec_assigns_icons_to_binaries_and_macos_bundle(self):
+        spec_text = (Path(__file__).resolve().parents[1] / "tools" / "Jamly.spec").read_text(encoding="utf-8")
+        self.assertIn('root / "tools" / "jamly.ico"', spec_text)
+        self.assertIn('root / "tools" / "jamly.icns"', spec_text)
+        self.assertEqual(spec_text.count("icon=win_icon"), 2)
+        self.assertIn("icon=mac_icon", spec_text)
+
+    def test_icon_builders_encode_dib_and_containers(self):
+        import base64
+        import struct
+
+        fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+        fake_b64 = base64.b64encode(fake_png).decode("ascii")
+        full = {}
+        for size in icon_tool.ICO_SIZES:
+            rgba = bytes([10, 20, 30, 0 if size == 16 else 255]) * (size * size)
+            full[str(size)] = {
+                "png": fake_b64,
+                "rgba": base64.b64encode(rgba).decode("ascii"),
+            }
+        ico_bytes = icon_tool.build_ico(full)
+        self.assertEqual(struct.unpack_from("<HHH", ico_bytes, 0), (0, 1, len(icon_tool.ICO_SIZES)))
+
+        mac = {str(size): fake_b64 for _tag, size in icon_tool.ICNS_CHUNKS}
+        icns_bytes = icon_tool.build_icns(mac)
+        magic, length = struct.unpack_from(">4sI", icns_bytes, 0)
+        self.assertEqual(magic, b"icns")
+        self.assertEqual(length, len(icns_bytes))
 
 
 if __name__ == "__main__":

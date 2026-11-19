@@ -70,6 +70,70 @@ def check_macos_links(root: Path) -> None:
                     raise AssertionError("Non-relocatable dependency in %s: %s" % (path, library))
 
 
+def check_bundle_icons(executable: Path) -> None:
+    if sys.platform == "darwin":
+        import plistlib
+        contents = executable.parents[1]
+        info = plistlib.loads((contents / "Info.plist").read_bytes())
+        assert info.get("CFBundleIconFile") == "jamly.icns", "Bundle Info.plist is missing jamly.icns"
+        bundled = (contents / "Resources" / "jamly.icns").read_bytes()
+        assert bundled == (ROOT / "tools" / "jamly.icns").read_bytes(), "Bundled macOS icon differs from tools/jamly.icns"
+        return
+    if os.name != "nt":
+        return
+    import ctypes
+    from ctypes import wintypes
+    import struct
+
+    ico = (ROOT / "tools" / "jamly.ico").read_bytes()
+    _reserved, _ico_type, count = struct.unpack_from("<HHH", ico, 0)
+    expected = []
+    for index in range(count):
+        _w, _h, _cc, _res, _planes, _bpp, size, offset = struct.unpack_from("<BBBBHHII", ico, 6 + index * 16)
+        expected.append(ico[offset:offset + size])
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.LoadLibraryExW.argtypes = [wintypes.LPCWSTR, wintypes.HANDLE, wintypes.DWORD]
+    kernel.LoadLibraryExW.restype = wintypes.HMODULE
+    kernel.FindResourceW.argtypes = [wintypes.HMODULE, wintypes.LPCWSTR, wintypes.LPCWSTR]
+    kernel.FindResourceW.restype = wintypes.HRSRC
+    kernel.LoadResource.argtypes = [wintypes.HMODULE, wintypes.HRSRC]
+    kernel.LoadResource.restype = wintypes.HGLOBAL
+    kernel.LockResource.argtypes = [wintypes.HGLOBAL]
+    kernel.LockResource.restype = ctypes.c_void_p
+    kernel.SizeofResource.argtypes = [wintypes.HMODULE, wintypes.HRSRC]
+    kernel.SizeofResource.restype = wintypes.DWORD
+    kernel.FreeLibrary.argtypes = [wintypes.HMODULE]
+    kernel.FreeLibrary.restype = wintypes.BOOL
+
+    def read_resource(module: int, res_id: int, res_type: int) -> bytes:
+        handle = kernel.FindResourceW(
+            module, ctypes.cast(res_id, wintypes.LPCWSTR), ctypes.cast(res_type, wintypes.LPCWSTR),
+        )
+        if not handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        loaded = kernel.LoadResource(module, handle)
+        pointer = kernel.LockResource(loaded)
+        size = kernel.SizeofResource(module, handle)
+        return ctypes.string_at(pointer, size)
+
+    for binary in (executable.with_name("Jamly.exe"), executable):
+        module = kernel.LoadLibraryExW(str(binary), None, 2)
+        if not module:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            group = read_resource(module, 1, 14)
+            _gr, _gt, grp_count = struct.unpack_from("<HHH", group, 0)
+            assert grp_count == len(expected), "Icon entry count mismatch in %s" % binary
+            embedded = []
+            for index in range(grp_count):
+                _w, _h, _cc, _res, _planes, _bpp, _bsize, nid = struct.unpack_from("<BBBBHHIH", group, 6 + index * 14)
+                embedded.append(read_resource(module, nid, 3))
+            assert embedded == expected, "Embedded Windows icon in %s differs from tools/jamly.ico" % binary
+        finally:
+            kernel.FreeLibrary(module)
+
+
 def stop_backend(url: str, token: str, state: Path) -> None:
     record = json.loads(next(state.glob("server-*.json")).read_text())
     handle = None
@@ -120,6 +184,7 @@ def main() -> int:
         root = Path(directory)
         executable = unpack(archive, root / "application with spaces")
         check_macos_links(root / "application with spaces")
+        check_bundle_icons(executable)
         environment = dict(os.environ, PATH="", PYTHONPATH="", PYTHONHOME="",
                            HF_HUB_DISABLE_IMPLICIT_TOKEN="1", HF_HUB_DISABLE_TELEMETRY="1")
         environment.pop("VIRTUAL_ENV", None)

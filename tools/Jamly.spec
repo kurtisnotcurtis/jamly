@@ -52,24 +52,26 @@ for index, (destination, source, kind) in enumerate(a.binaries):
         replaced = True
 if not replaced:
     raise RuntimeError("The soundfile library hook changed; inspect it before bundling")
+win_icon = str(root / "tools" / "jamly.ico") if sys.platform == "win32" else None
+mac_icon = str(root / "tools" / "jamly.icns")
 pyz = PYZ(a.pure)
 launcher = EXE(
     pyz, a.scripts, [], exclude_binaries=True, name="Jamly", console=sys.platform == "linux",
-    strip=False, upx=False,
+    icon=win_icon, strip=False, upx=False,
 )
 runtime = EXE(
     pyz, a.scripts, [], exclude_binaries=True, name="jamly-runtime", console=True,
-    strip=False, upx=False,
+    icon=win_icon, strip=False, upx=False,
 )
 collection = COLLECT(
     launcher, runtime, a.binaries, a.datas, strip=False, upx=False, name="Jamly",
 )
 if sys.platform == "darwin":
     app = BUNDLE(
-        collection, name="Jamly.app", bundle_identifier="com.jamly.companion",
+        collection, name="Jamly.app", icon=mac_icon, bundle_identifier="com.jamly.companion",
         info_plist={
-            "CFBundleShortVersionString": "0.1.0",
-            "CFBundleVersion": "0.1.0",
+            "CFBundleShortVersionString": "0.1.1",
+            "CFBundleVersion": "0.1.1",
             "LSMinimumSystemVersion": "13.0",
             "LSUIElement": True,
             "NSHighResolutionCapable": True,
