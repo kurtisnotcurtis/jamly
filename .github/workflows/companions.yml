@@ -138,7 +138,7 @@ jobs:
           pattern: Jamly-*
           path: dist/release
           merge-multiple: true
-      - name: Package browser extension, WinGet manifests, and consolidated checksums
+      - name: Package browser extension, package manifests, and consolidated checksums
         run: |
           VERSION="$(python3 tools/version.py --check --tag "${GITHUB_REF_NAME}")"
           python3 - "$VERSION" <<'PY'
@@ -149,7 +149,12 @@ jobs:
           import zipfile
 
           sys.path.insert(0, "tools")
+          from render_aur import render_aur_package
+          from render_homebrew import render_homebrew_cask
           from render_winget import render_winget_manifests
+
+          def sha256_file(path: Path) -> str:
+              return hashlib.sha256(path.read_bytes()).hexdigest()
 
           version = sys.argv[1]
           release_dir = Path("dist/release")
@@ -167,18 +172,35 @@ jobs:
           )
 
           win_zip = release_dir / f"Jamly-{version}-win32-amd64.zip"
-          win_sha256 = hashlib.sha256(win_zip.read_bytes()).hexdigest().upper()
           render_winget_manifests(
               version,
-              win_sha256,
+              sha256_file(win_zip).upper(),
               Path("dist/winget"),
               zip_path=release_dir / f"winget-manifests-{version}.zip",
+          )
+
+          linux_tar = release_dir / f"Jamly-{version}-linux-x86_64.tar.gz"
+          render_aur_package(
+              version,
+              sha256_file(linux_tar),
+              Path("dist/aur"),
+              zip_path=release_dir / f"aur-jamly-bin-{version}.zip",
+          )
+
+          mac_arm64_zip = release_dir / f"Jamly-{version}-darwin-arm64.zip"
+          mac_x86_64_zip = release_dir / f"Jamly-{version}-darwin-x86_64.zip"
+          render_homebrew_cask(
+              version,
+              sha256_file(mac_arm64_zip),
+              sha256_file(mac_x86_64_zip),
+              Path("dist/homebrew"),
+              zip_path=release_dir / f"homebrew-tap-{version}.zip",
           )
 
           checksum_lines = []
           for asset in sorted(release_dir.iterdir()):
               if asset.is_file() and not asset.name.endswith(".sha256") and asset.name != "SHA256SUMS.txt":
-                  digest = hashlib.sha256(asset.read_bytes()).hexdigest()
+                  digest = sha256_file(asset)
                   checksum_lines.append(f"{digest}  {asset.name}\n")
           (release_dir / "SHA256SUMS.txt").write_text("".join(checksum_lines), encoding="utf-8")
           PY

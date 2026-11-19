@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Jamly
+Comment=Split media URLs or local audio into isolated stems locally with Demucs v4
+Exec=jamly
+Icon=jamly
+Terminal=false
+Categories=AudioVideo;Audio;Music;
+Keywords=audio;demucs;drums;drumless;karaoke;stems;

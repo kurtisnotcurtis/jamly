@@ -5,12 +5,21 @@ import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 import re
-import zipfile
+import sys
 
-ROOT = Path(__file__).resolve().parents[1]
+TOOLS_DIR = Path(__file__).resolve().parent
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+
+from package_render import (  # noqa: E402
+    ROOT,
+    normalize_semver,
+    normalize_sha256,
+    render_template_files,
+    write_package_zip,
+)
+
 PACKAGE_ID = "kurtisnotcurtis.Jamly"
-SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
-SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -23,13 +32,8 @@ def render_winget_manifests(
     template_dir: Path | None = None,
     zip_path: Path | None = None,
 ) -> Path:
-    ver = version.strip().removeprefix("v")
-    if not SEMVER_RE.match(ver):
-        raise ValueError("Invalid SemVer version: %r" % version)
-    digest = sha256_amd64.strip()
-    if not SHA256_RE.match(digest):
-        raise ValueError("Invalid SHA-256 hex digest: %r" % sha256_amd64)
-    digest_upper = digest.upper()
+    ver = normalize_semver(version)
+    digest_upper = normalize_sha256(sha256_amd64, uppercase=True)
     date_value = (release_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")).strip()
     if not DATE_RE.match(date_value):
         raise ValueError("Invalid release date (expected YYYY-MM-DD): %r" % release_date)
@@ -40,23 +44,18 @@ def render_winget_manifests(
         raise ValueError("Expected 3 WinGet manifest templates in %s" % templates)
 
     manifest_dir = output_dir / PACKAGE_ID / ver
-    manifest_dir.mkdir(parents=True, exist_ok=True)
-    rendered_paths: list[Path] = []
-    for template in yaml_files:
-        content = template.read_text(encoding="utf-8")
-        content = content.replace("__VERSION__", ver)
-        content = content.replace("__RELEASE_DATE__", date_value)
-        content = content.replace("__SHA256_AMD64__", digest_upper)
-        target = manifest_dir / template.name
-        target.write_text(content, encoding="utf-8", newline="\n")
-        rendered_paths.append(target)
+    rendered_paths = render_template_files(
+        yaml_files,
+        manifest_dir,
+        {
+            "__VERSION__": ver,
+            "__RELEASE_DATE__": date_value,
+            "__SHA256_AMD64__": digest_upper,
+        },
+    )
 
     if zip_path is not None:
-        zip_path.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            for path in rendered_paths:
-                arcname = f"{PACKAGE_ID}/{ver}/{path.name}"
-                zf.write(path, arcname)
+        write_package_zip(rendered_paths, output_dir, zip_path)
 
     return manifest_dir
 

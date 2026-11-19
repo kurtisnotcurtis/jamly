@@ -1,0 +1,44 @@
+# Maintainer: Kurt Galiatsatos <https://github.com/kurtisnotcurtis>
+pkgname=jamly-bin
+pkgver=__VERSION__
+pkgrel=1
+pkgdesc="Split media URLs or local audio into isolated drums, drumless, karaoke, or multi-stem tracks locally with Demucs v4"
+arch=('x86_64')
+url="https://kurtisnotcurtis.github.io/jamly/"
+license=('MIT' 'LGPL-2.0-or-later' 'LGPL-2.1-or-later' 'LGPL-3.0-or-later' 'Apache-2.0')
+depends=('glibc' 'xdg-utils')
+provides=('jamly')
+conflicts=('jamly')
+options=('!strip' '!debug')
+source=("Jamly-${pkgver}-linux-x86_64.tar.gz::https://github.com/kurtisnotcurtis/jamly/releases/download/v${pkgver}/Jamly-${pkgver}-linux-x86_64.tar.gz"
+        "jamly.desktop"
+        "jamly.svg")
+sha256sums=('__SHA256_LINUX_TARBALL__'
+            '__SHA256_DESKTOP__'
+            '__SHA256_ICON__')
+
+package() {
+    install -d "$pkgdir/opt/$pkgname"
+    cp -a "$srcdir/Jamly/." "$pkgdir/opt/$pkgname/"
+
+    install -d "$pkgdir/usr/bin"
+    cat <<'EOF' > "$pkgdir/usr/bin/jamly"
+#!/bin/sh
+exec /opt/jamly-bin/Jamly "$@"
+EOF
+    chmod 0755 "$pkgdir/usr/bin/jamly"
+
+    cat <<'EOF' > "$pkgdir/usr/bin/jamly-runtime"
+#!/bin/sh
+exec /opt/jamly-bin/jamly-runtime "$@"
+EOF
+    chmod 0755 "$pkgdir/usr/bin/jamly-runtime"
+
+    install -Dm644 "$srcdir/jamly.desktop" "$pkgdir/usr/share/applications/jamly.desktop"
+    install -Dm644 "$srcdir/jamly.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/jamly.svg"
+    if [ -f "$srcdir/Jamly/_internal/notices/JAMLY-LICENSE.md" ]; then
+        install -Dm644 "$srcdir/Jamly/_internal/notices/JAMLY-LICENSE.md" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    elif [ -f "$srcdir/Jamly/notices/JAMLY-LICENSE.md" ]; then
+        install -Dm644 "$srcdir/Jamly/notices/JAMLY-LICENSE.md" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    fi
+}

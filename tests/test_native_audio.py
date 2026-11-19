@@ -41,9 +41,19 @@ def _load_icon_tool():
     return module
 
 
+def _load_tool(filename: str):
+    path = Path(__file__).resolve().parents[1] / "tools" / filename
+    spec = importlib.util.spec_from_file_location("jamly_tools_" + path.stem, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 native_audio = _load_native_audio()
 version_tool = _load_version_tool()
 winget_tool = _load_winget_tool()
+aur_tool = _load_tool("render_aur.py")
+homebrew_tool = _load_tool("render_homebrew.py")
 icon_tool = _load_icon_tool()
 
 PAYLOAD = b"fake checksum-pinned source archive"
@@ -221,6 +231,81 @@ class WingetManifestTests(unittest.TestCase):
                     "kurtisnotcurtis.Jamly/0.1.0/kurtisnotcurtis.Jamly.yaml",
                 ],
             )
+
+
+class AurPackageTests(unittest.TestCase):
+    def test_renders_aur_package_and_zip_archive(self):
+        import hashlib
+        import zipfile
+
+        digest = "AB" * 32
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            out_dir = base / "aur"
+            zip_path = base / "aur-jamly-bin-0.1.1.zip"
+            pkg_dir = aur_tool.render_aur_package(
+                "v0.1.1",
+                digest,
+                out_dir,
+                zip_path=zip_path,
+            )
+            self.assertEqual(pkg_dir, out_dir / "jamly-bin")
+            pkgbuild_text = (pkg_dir / "PKGBUILD").read_text(encoding="utf-8")
+            srcinfo_text = (pkg_dir / ".SRCINFO").read_text(encoding="utf-8")
+            desktop_digest = hashlib.sha256((pkg_dir / "jamly.desktop").read_bytes()).hexdigest()
+            icon_digest = hashlib.sha256((pkg_dir / "jamly.svg").read_bytes()).hexdigest()
+            self.assertIn("pkgver=0.1.1", pkgbuild_text)
+            self.assertIn(digest.lower(), pkgbuild_text)
+            self.assertIn(desktop_digest, pkgbuild_text)
+            self.assertIn(icon_digest, pkgbuild_text)
+            self.assertIn("options=('!strip' '!debug')", pkgbuild_text)
+            self.assertNotIn("__", pkgbuild_text)
+            self.assertIn("pkgver = 0.1.1", srcinfo_text)
+            self.assertIn("sha256sums = " + digest.lower(), srcinfo_text)
+            self.assertIn("sha256sums = " + desktop_digest, srcinfo_text)
+            self.assertIn("sha256sums = " + icon_digest, srcinfo_text)
+            self.assertNotIn("__", srcinfo_text)
+            with zipfile.ZipFile(zip_path) as zf:
+                names = sorted(zf.namelist())
+            self.assertEqual(
+                names,
+                [
+                    "jamly-bin/.SRCINFO",
+                    "jamly-bin/PKGBUILD",
+                    "jamly-bin/jamly.desktop",
+                    "jamly-bin/jamly.svg",
+                ],
+            )
+
+
+class HomebrewCaskTests(unittest.TestCase):
+    def test_renders_homebrew_cask_and_zip_archive(self):
+        import zipfile
+
+        arm_digest = "AA" * 32
+        intel_digest = "BB" * 32
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            out_dir = base / "homebrew"
+            zip_path = base / "homebrew-tap-0.1.1.zip"
+            cask_path = homebrew_tool.render_homebrew_cask(
+                "v0.1.1",
+                arm_digest,
+                intel_digest,
+                out_dir,
+                zip_path=zip_path,
+            )
+            self.assertEqual(cask_path, out_dir / "Casks" / "jamly.rb")
+            cask_text = cask_path.read_text(encoding="utf-8")
+            self.assertIn('version "0.1.1"', cask_text)
+            self.assertIn(arm_digest.lower(), cask_text)
+            self.assertIn(intel_digest.lower(), cask_text)
+            self.assertIn('command_wrapper "jamly"', cask_text)
+            self.assertIn('command_wrapper "jamly-runtime"', cask_text)
+            self.assertNotIn("__", cask_text)
+            with zipfile.ZipFile(zip_path) as zf:
+                names = sorted(zf.namelist())
+            self.assertEqual(names, ["Casks/jamly.rb"])
 
 
 class BundleIconTests(unittest.TestCase):

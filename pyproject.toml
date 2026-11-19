@@ -11,7 +11,19 @@ readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = "MIT"
 license-files = ["LICENSE.md"]
+authors = [{ name = "Kurt Galiatsatos" }]
 keywords = ["audio", "demucs", "stem-separation", "yt-dlp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Sound/Audio :: Conversion",
+]
 dependencies = [
     "demucs>=4.1,<5",
     "filelock>=3.16",
@@ -25,6 +37,7 @@ dependencies = [
 Homepage = "https://kurtisnotcurtis.github.io/jamly/"
 Repository = "https://github.com/kurtisnotcurtis/jamly"
 Releases = "https://github.com/kurtisnotcurtis/jamly/releases"
+Issues = "https://github.com/kurtisnotcurtis/jamly/issues"
 
 [project.scripts]
 jamly = "jamly.run:main"
