@@ -7,6 +7,7 @@
 <p align="center">
   <a href="https://kurtisnotcurtis.github.io/jamly/">Website &amp; Setup Guide</a> ·
   <a href="https://github.com/kurtisnotcurtis/jamly/releases">Download Releases</a> ·
+  <a href="https://pypi.org/project/jamly-audio-sep/">PyPI</a> ·
   <a href="DESIGN.md">Architecture (DESIGN.md)</a>
 </p>
 
@@ -53,7 +54,7 @@ Windows:        winget install Gyan.FFmpeg
 Then install Jamly and verify your environment:
 
 ```sh
-uv tool install --python 3.12 git+https://github.com/kurtisnotcurtis/jamly.git
+uv tool install --python 3.12 jamly-audio-sep
 jamly-doctor
 ```
 
