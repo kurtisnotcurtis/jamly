@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jamly status helper
 // @namespace    https://github.com/kurtisnotcurtis/jamly
-// @version      0.1.3
+// @version      0.1.4
 // @description  Optional status/enqueue helper for a paired local Jamly backend.
 // @match        https://www.youtube.com/*
 // @match        https://music.youtube.com/*

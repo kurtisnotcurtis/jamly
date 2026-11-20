@@ -70,8 +70,8 @@ if sys.platform == "darwin":
     app = BUNDLE(
         collection, name="Jamly.app", icon=mac_icon, bundle_identifier="com.jamly.companion",
         info_plist={
-            "CFBundleShortVersionString": "0.1.3",
-            "CFBundleVersion": "0.1.3",
+            "CFBundleShortVersionString": "0.1.4",
+            "CFBundleVersion": "0.1.4",
             "LSMinimumSystemVersion": "13.0",
             "LSUIElement": True,
             "NSHighResolutionCapable": True,
