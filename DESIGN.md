@@ -83,9 +83,14 @@ Queue persistence errors are exposed, not converted into successful acceptance.
 
 ## Companion, local API and browser
 
-API version 3 uses finite JSON snapshots. The backend owns all durable state. The local companion page
-polls while visible; the extension service worker handles requests on demand and its popup polls while
-open. Neither browser page owns the inference process. The Exports list can clear finished/failed
+API version 3 uses finite JSON snapshots. Bare `/status` returns active jobs plus the most recent 100
+completed/terminal jobs; `/status?q=...&status=...&model=...&format=...&page=...&page_size=...`
+filters and paginates across the full collection so large export libraries transfer and render only
+one page at a time. The backend owns all durable state. The local companion page polls while visible
+(2s while work is queued/running, 6s while idle) and skips DOM rebuilds when a page snapshot is
+unchanged; the extension service worker handles requests on demand and its popup polls while open.
+Neither browser page owns the inference process. The Exports section sits at the bottom of the
+companion page with search, status/preset/format filters, and pagination; it can clear finished/failed
 entries without removing audio files on disk, and can rescan `<output>/.jamly/` manifests to
 repopulate saved exports.
 

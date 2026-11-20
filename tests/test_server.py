@@ -504,6 +504,57 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(code, 200)
             mocked_open.assert_called_once_with(local_file.parent.resolve())
 
+    def test_status_search_filter_and_pagination_for_large_collections(self):
+        def process(wid, args, **_kwargs):
+            if wid == "track-err":
+                return ItemResult(wid, status="error", error="broken audio")
+            return ItemResult(wid, status="done", title="Song " + wid)
+
+        self.start(process)
+        # Seed 30 items directly via queue so test stays fast while exercising >25 pagination.
+        entries = []
+        for idx in range(30):
+            wid = f"track-{idx:03d}"
+            opts = {
+                "model": "htdemucs_6s" if idx % 3 == 0 else "htdemucs",
+                "stem": "drums",
+                "audio_format": "wav" if idx % 2 == 0 else "mp3",
+            }
+            entries.append((wid, f"Song {idx:03d} {'Jazz' if idx % 5 == 0 else 'Rock'}", opts))
+        with self.app._status_lock:
+            for idx, (wid, title, opts) in enumerate(entries):
+                self.app.queue.add(wid, title=title, source_url="https://youtu.be/" + wid, options=opts)
+                if idx == 0:
+                    self.app.queue.finish(wid, "error", error="broken audio")
+                elif idx == 1:
+                    self.app.queue.finish(wid, "cancelled")
+                else:
+                    self.app.queue.finish(wid, "done")
+            self.app.queue.save()
+
+        code, page1, _ = self.request("GET", "/status?page=1&page_size=10")
+        self.assertEqual(code, 200)
+        self.assertEqual(len(page1["jobs"]), 10)
+        self.assertEqual(page1["pagination"], {
+            "page": 1, "page_size": 10, "total_matched": 30, "total_pages": 3,
+        })
+
+        code, page3, _ = self.request("GET", "/status?page=99&page_size=10")
+        self.assertEqual(code, 200)
+        self.assertEqual(page3["pagination"]["page"], 3)
+        self.assertEqual(len(page3["jobs"]), 10)
+
+        code, jazz, _ = self.request("GET", "/status?q=jazz&model=htdemucs_6s&format=wav&page=1&page_size=25")
+        self.assertEqual(code, 200)
+        self.assertTrue(all("Jazz" in job["title"] for job in jazz["jobs"]))
+        self.assertTrue(all(job["model"] == "htdemucs_6s" and job["audio_format"] == "wav" for job in jazz["jobs"]))
+
+        code, errs, _ = self.request("GET", "/status?status=error&page=1&page_size=25")
+        self.assertEqual(code, 200)
+        self.assertEqual([job["watch_id"] for job in errs["jobs"]], ["track-000"])
+
+        self.assertEqual(self.request("GET", "/status?status=bogus")[0], 400)
+
 
 class HostTests(unittest.TestCase):
     def test_only_real_loopback_hosts_are_trusted(self):

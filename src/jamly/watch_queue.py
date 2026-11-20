@@ -49,10 +49,11 @@ class WatchQueue:
     def __init__(self, path: str = "", items=None, done=None):
         self.path = str(Path(path).absolute()) if path else ""
         self._items = copy.deepcopy(items or [])
+        self._by_id = {item["watch_id"]: item for item in self._items}
         self._revision = 0
         self._save_lock = threading.Lock()
         for wid in done or []:
-            if not any(item["watch_id"] == wid for item in self._items):
+            if wid not in self._by_id:
                 self.add(wid)
             self.mark_done(wid)
 
@@ -94,10 +95,12 @@ class WatchQueue:
                 exports = record.get("exports", {})
                 if not isinstance(exports, dict):
                     raise ValueError("job exports must be an object")
-                queue._items.append(dict(
+                entry = dict(
                     record, watch_id=wid, source_url=source, status=status,
                     options=options, exports=exports, title=record.get("title"),
-                ))
+                )
+                queue._items.append(entry)
+                queue._by_id[wid] = entry
         except (OSError, ValueError, TypeError) as exc:
             raise QueueError("Cannot load queue %s: %s" % (path, exc)) from exc
         return queue
@@ -106,7 +109,7 @@ class WatchQueue:
         if not re.fullmatch(r"[A-Za-z0-9_-]+", watch_id):
             raise ValueError("invalid stable id")
         now = time.time()
-        previous = next((item for item in self._items if item["watch_id"] == watch_id), None)
+        previous = self._by_id.get(watch_id)
         if previous is not None:
             if previous["status"] in ("pending", "running") or not retry:
                 return False
@@ -118,13 +121,15 @@ class WatchQueue:
             if title:
                 previous["title"] = title
             return True
-        self._items.append({
+        entry = {
             "watch_id": watch_id, "source_url": source_url or watch_id, "title": title,
             "status": "pending", "error": None, "outputs": {}, "exports": {},
             "options": copy.deepcopy(options or {}),
             "attempts": 0, "requested_at": now, "started_at": None,
             "finished_at": None, "duration_seconds": None, "updated_at": now,
-        })
+        }
+        self._items.append(entry)
+        self._by_id[watch_id] = entry
         return True
 
     def add_all(self, watch_ids, titles=None, source_urls=None, *, retry=False, options=None) -> int:
@@ -136,7 +141,8 @@ class WatchQueue:
         ) for index, wid in enumerate(watch_ids))
 
     def get(self, watch_id: str) -> dict | None:
-        return next((copy.deepcopy(item) for item in self._items if item["watch_id"] == watch_id), None)
+        item = self._by_id.get(watch_id)
+        return copy.deepcopy(item) if item is not None else None
 
     def copy(self) -> "WatchQueue":
         result = WatchQueue(self.path, items=self.items)
@@ -144,13 +150,16 @@ class WatchQueue:
         return result
 
     def remove(self, watch_id: str) -> bool:
-        before = len(self._items)
+        if watch_id not in self._by_id:
+            return False
+        self._by_id.pop(watch_id, None)
         self._items = [item for item in self._items if item["watch_id"] != watch_id]
-        return len(self._items) != before
+        return True
 
     def clear_terminal(self) -> int:
         before = len(self._items)
         self._items = [item for item in self._items if item["status"] in ("pending", "running")]
+        self._by_id = {item["watch_id"]: item for item in self._items}
         return before - len(self._items)
 
     @staticmethod
@@ -184,9 +193,9 @@ class WatchQueue:
             "outputs": dict(outputs),
             "generation": generation,
         }
-        existing = next((item for item in self._items if item["watch_id"] == watch_id), None)
+        existing = self._by_id.get(watch_id)
         if existing is None:
-            self._items.append({
+            new_entry = {
                 "watch_id": watch_id,
                 "source_url": source_url or watch_id,
                 "title": title,
@@ -202,7 +211,9 @@ class WatchQueue:
                 "finished_at": finished_at,
                 "duration_seconds": None,
                 "updated_at": finished_at or time.time(),
-            })
+            }
+            self._items.append(new_entry)
+            self._by_id[watch_id] = new_entry
             return True
         changed = False
         exports = dict(existing.get("exports") or {})
@@ -242,54 +253,53 @@ class WatchQueue:
     def mark_running(self, watch_id: str) -> None:
         self.finish(watch_id, "running")
         now = time.time()
-        for item in self._items:
-            if item["watch_id"] == watch_id:
-                item["attempts"] = item.get("attempts", 0) + 1
-                item["started_at"] = now
-                item["finished_at"] = None
-                item["duration_seconds"] = None
-                if item.get("requested_at") is None:
-                    item["requested_at"] = now
+        item = self._by_id.get(watch_id)
+        if item is not None:
+            item["attempts"] = item.get("attempts", 0) + 1
+            item["started_at"] = now
+            item["finished_at"] = None
+            item["duration_seconds"] = None
+            if item.get("requested_at") is None:
+                item["requested_at"] = now
 
     def finish(self, watch_id: str, status: str, *, error=None, outputs=None,
                title=None, generation=None) -> None:
         if status not in self.STATUSES:
             raise ValueError("unknown job status")
+        item = self._by_id.get(watch_id)
+        if item is None:
+            raise QueueError("Unknown job: %s" % watch_id)
         now = time.time()
-        for item in self._items:
-            if item["watch_id"] == watch_id:
-                item.update(status=status, error=error, updated_at=now)
-                if status in ("done", "skipped", "error", "cancelled"):
-                    item["finished_at"] = now
-                    started = item.get("started_at")
-                    item["duration_seconds"] = (
-                        round(max(0.0, now - started), 2)
-                        if isinstance(started, (int, float))
-                        else None
-                    )
-                if outputs is not None:
-                    item["outputs"] = dict(outputs)
-                if title:
-                    item["title"] = title
-                if generation is not None:
-                    item["generation"] = generation
-                if status in ("done", "skipped") and item.get("outputs") and item.get("generation"):
-                    opts = item.get("options") or {}
-                    model = opts.get("model", "htdemucs")
-                    stem = opts.get("stem", "drums")
-                    audio_format = opts.get("audio_format", "mp3")
-                    exports = dict(item.get("exports") or {})
-                    export_key = self._export_key(model, stem, audio_format)
-                    exports[export_key] = {
-                        "model": model,
-                        "stem": stem,
-                        "audio_format": audio_format,
-                        "outputs": dict(item["outputs"]),
-                        "generation": item["generation"],
-                    }
-                    item["exports"] = exports
-                return
-        raise QueueError("Unknown job: %s" % watch_id)
+        item.update(status=status, error=error, updated_at=now)
+        if status in ("done", "skipped", "error", "cancelled"):
+            item["finished_at"] = now
+            started = item.get("started_at")
+            item["duration_seconds"] = (
+                round(max(0.0, now - started), 2)
+                if isinstance(started, (int, float))
+                else None
+            )
+        if outputs is not None:
+            item["outputs"] = dict(outputs)
+        if title:
+            item["title"] = title
+        if generation is not None:
+            item["generation"] = generation
+        if status in ("done", "skipped") and item.get("outputs") and item.get("generation"):
+            opts = item.get("options") or {}
+            model = opts.get("model", "htdemucs")
+            stem = opts.get("stem", "drums")
+            audio_format = opts.get("audio_format", "mp3")
+            exports = dict(item.get("exports") or {})
+            export_key = self._export_key(model, stem, audio_format)
+            exports[export_key] = {
+                "model": model,
+                "stem": stem,
+                "audio_format": audio_format,
+                "outputs": dict(item["outputs"]),
+                "generation": item["generation"],
+            }
+            item["exports"] = exports
 
     def mark_done(self, watch_id: str) -> None:
         self.finish(watch_id, "done")

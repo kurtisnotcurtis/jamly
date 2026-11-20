@@ -382,60 +382,156 @@ class ItemServer:
             self._wake.wait()
             self._wake.clear()
 
-    def snapshot(self) -> dict:
+    @staticmethod
+    def _parse_status_query(query: dict | None) -> tuple[str, str, str, str, int, int] | None:
+        if not query:
+            return None
+        q = (query.get("q") or [""])[0].strip().lower()
+        status_filter = (query.get("status") or ["all"])[0].strip().lower()
+        if status_filter not in ("all", "active", "done", "error", "cancelled"):
+            raise ValueError("status filter must be all, active, done, error, or cancelled")
+        model_filter = (query.get("model") or ["all"])[0].strip()
+        if model_filter != "all":
+            validate_model(model_filter)
+        format_filter = (query.get("format") or ["all"])[0].strip().lower()
+        if format_filter not in ("all", "mp3", "wav"):
+            raise ValueError("format filter must be all, mp3, or wav")
+        try:
+            page = int((query.get("page") or ["1"])[0])
+            page_size = int((query.get("page_size") or ["25"])[0])
+        except ValueError as exc:
+            raise ValueError("page and page_size must be integers") from exc
+        if page < 1:
+            page = 1
+        page_size = max(1, min(100, page_size))
+        return q, status_filter, model_filter, format_filter, page, page_size
+
+    @staticmethod
+    def _matches_filters(item: dict, q: str, status_filter: str, model_filter: str, format_filter: str) -> bool:
+        status = item["status"]
+        if status_filter == "active" and status not in ("pending", "running"):
+            return False
+        if status_filter == "done" and status not in ("done", "skipped"):
+            return False
+        if status_filter in ("error", "cancelled") and status != status_filter:
+            return False
+        options = item.get("options") or {}
+        exports = (item.get("exports") or {}).values()
+        if model_filter != "all":
+            if options.get("model", DEFAULT_MODEL) != model_filter and not any(
+                exp.get("model", DEFAULT_MODEL) == model_filter for exp in exports
+            ):
+                return False
+        if format_filter != "all":
+            if options.get("audio_format", "mp3") != format_filter and not any(
+                exp.get("audio_format", "mp3") == format_filter for exp in exports
+            ):
+                return False
+        if q:
+            haystack = "\n".join(
+                str(part) for part in (item.get("title"), item.get("watch_id"), item.get("source_url"), item.get("error"))
+                if part
+            ).lower()
+            if q not in haystack:
+                return False
+        return True
+
+    @staticmethod
+    def _serialize_job(item: dict) -> dict:
+        record = {key: item.get(key) for key in (
+            "watch_id", "title", "source_url", "status", "error", "attempts",
+            "requested_at", "started_at", "finished_at", "duration_seconds", "updated_at",
+        )}
+        record["outputs"] = []
+        record["exports"] = []
+        record["model"] = item.get("options", {}).get("model", DEFAULT_MODEL)
+        record["stem"] = item.get("options", {}).get("stem", DEFAULT_STEM)
+        record["audio_format"] = item.get("options", {}).get("audio_format", "mp3")
+        active_generation = None
+        if item["status"] in ("done", "skipped") and item.get("generation"):
+            active_generation = item["generation"]
+            for kind, path in item.get("outputs", {}).items():
+                if kind in ALL_OUTPUT_KINDS:
+                    record["outputs"].append({
+                        "kind": kind, "name": Path(path).name,
+                        "url": "/outputs/%s/%s?generation=%s" % (
+                            quote(item["watch_id"], safe=""), kind, quote(item["generation"], safe="")
+                        ),
+                    })
+        for exp in (item.get("exports") or {}).values():
+            gen = exp.get("generation")
+            if not gen or gen == active_generation:
+                continue
+            exp_outputs = []
+            for kind, path in exp.get("outputs", {}).items():
+                if kind in ALL_OUTPUT_KINDS:
+                    exp_outputs.append({
+                        "kind": kind, "name": Path(path).name,
+                        "url": "/outputs/%s/%s?generation=%s" % (
+                            quote(item["watch_id"], safe=""), kind, quote(gen, safe="")
+                        ),
+                    })
+            if exp_outputs:
+                record["exports"].append({
+                    "model": exp.get("model", DEFAULT_MODEL),
+                    "stem": exp.get("stem", DEFAULT_STEM),
+                    "audio_format": exp.get("audio_format", "mp3"),
+                    "generation": gen,
+                    "outputs": exp_outputs,
+                })
+        return record
+
+    def snapshot(self, query: dict | None = None) -> dict:
+        parsed = self._parse_status_query(query)
         with self._status_lock:
-            items = self.queue.items
-            terminal = [item for item in items if item["status"] not in ("pending", "running")]
-            visible = [item for item in items if item["status"] in ("pending", "running")] + terminal[-100:]
-            jobs = []
-            for item in reversed(visible):
-                record = {key: item.get(key) for key in (
-                    "watch_id", "title", "source_url", "status", "error", "attempts",
-                    "requested_at", "started_at", "finished_at", "duration_seconds", "updated_at",
-                )}
-                record["outputs"] = []
-                record["exports"] = []
-                record["model"] = item.get("options", {}).get("model", DEFAULT_MODEL)
-                record["stem"] = item.get("options", {}).get("stem", DEFAULT_STEM)
-                record["audio_format"] = item.get("options", {}).get("audio_format", "mp3")
-                active_generation = None
-                if item["status"] in ("done", "skipped") and item.get("generation"):
-                    active_generation = item["generation"]
-                    for kind, path in item.get("outputs", {}).items():
-                        if kind in ALL_OUTPUT_KINDS:
-                            record["outputs"].append({
-                                "kind": kind, "name": Path(path).name,
-                                "url": "/outputs/%s/%s?generation=%s" % (
-                                    quote(item["watch_id"], safe=""), kind, quote(item["generation"], safe="")
-                                ),
-                            })
-                for exp in (item.get("exports") or {}).values():
-                    gen = exp.get("generation")
-                    if not gen or gen == active_generation:
-                        continue
-                    exp_outputs = []
-                    for kind, path in exp.get("outputs", {}).items():
-                        if kind in ALL_OUTPUT_KINDS:
-                            exp_outputs.append({
-                                "kind": kind, "name": Path(path).name,
-                                "url": "/outputs/%s/%s?generation=%s" % (
-                                    quote(item["watch_id"], safe=""), kind, quote(gen, safe="")
-                                ),
-                            })
-                    if exp_outputs:
-                        record["exports"].append({
-                            "model": exp.get("model", DEFAULT_MODEL),
-                            "stem": exp.get("stem", DEFAULT_STEM),
-                            "audio_format": exp.get("audio_format", "mp3"),
-                            "generation": gen,
-                            "outputs": exp_outputs,
-                        })
-                jobs.append(record)
-            return {
-                "api_version": 3, "pending": sum(item["status"] == "pending" for item in items),
-                "done": len(self.queue.done_ids()), "failed": sum(item["status"] == "error" for item in items),
+            items = self.queue._items
+            pending_count = 0
+            done_count = 0
+            failed_count = 0
+            running = []
+            pending = []
+            terminal = []
+            for idx, item in enumerate(items):
+                st = item["status"]
+                if st == "pending":
+                    pending_count += 1
+                    pending.append(item)
+                elif st == "running":
+                    running.append(item)
+                else:
+                    if st in ("done", "skipped"):
+                        done_count += 1
+                    elif st == "error":
+                        failed_count += 1
+                    terminal.append((item.get("finished_at") or item.get("updated_at") or 0, idx, item))
+            terminal.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
+            ordered = running + pending + [entry[2] for entry in terminal]
+            pagination = None
+            if parsed is None:
+                visible = ordered[:100 + len(running) + len(pending)]
+            else:
+                q, status_filter, model_filter, format_filter, page, page_size = parsed
+                matched = [
+                    item for item in ordered
+                    if self._matches_filters(item, q, status_filter, model_filter, format_filter)
+                ]
+                total_matched = len(matched)
+                total_pages = max(1, (total_matched + page_size - 1) // page_size)
+                page = min(page, total_pages)
+                start = (page - 1) * page_size
+                visible = matched[start:start + page_size]
+                pagination = {
+                    "page": page,
+                    "page_size": page_size,
+                    "total_matched": total_matched,
+                    "total_pages": total_pages,
+                }
+            payload = {
+                "api_version": 3, "pending": pending_count,
+                "done": done_count, "failed": failed_count,
                 "total": len(items), "current": dict(self._current) if self._current else None,
-                "jobs": jobs, "error": self._error, "models": model_choices(),
+                "jobs": [self._serialize_job(item) for item in visible],
+                "error": self._error, "models": model_choices(),
                 "stems": stem_choices(),
                 "defaults": {
                     key: value for key, value in pipeline_options(self.args).items()
@@ -443,6 +539,9 @@ class ItemServer:
                     or (key == "stem" and value != DEFAULT_STEM)
                 },
             }
+            if pagination is not None:
+                payload["pagination"] = pagination
+            return payload
 
     def start(self):
         with self._stop_lock:
@@ -615,7 +714,11 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
             self._json({"ok": not bool(self.app._error), "version": __version__,
                         "api_version": 3, "authentication_required": True})
         elif url.path in ("/status", "/items"):
-            self._json(self.app.snapshot())
+            try:
+                query = parse_qs(url.query, keep_blank_values=False) if url.query else None
+                self._json(self.app.snapshot(query))
+            except ValueError as exc:
+                self._json({"error": str(exc)}, 400)
         elif url.path.startswith("/outputs/"):
             self._output(url)
         else:

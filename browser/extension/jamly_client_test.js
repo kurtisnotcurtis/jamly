@@ -16,7 +16,8 @@ async function backend(t) {
         response.end(JSON.stringify({ error: "Pair the client first" }));
         return;
       }
-      if (request.url === "/status") {
+      if (request.url.startsWith("/status")) {
+        received.push({ url: request.url });
         response.end(JSON.stringify({ api_version: 3, jobs: [], pending: 0, done: 0 }));
       } else {
         received.push({ url: request.url, body: JSON.parse(Buffer.concat(chunks).toString()) });
@@ -33,12 +34,15 @@ async function backend(t) {
 test("paired JSON status, submission and retry preserve input and options", async t => {
   const { config, received } = await backend(t);
   assert.equal((await client.status(config)).api_version, 3);
+  await client.status(config, { q: "jazz", status: "done", model: "all", page: 2, page_size: 25 });
   assert.equal((await client.addInputs(config, ["https://example.test/a"], true, {
     model: "htdemucs_ft", audio_format: "wav",
   })).newly_added, 1);
   await client.retry(config, "src-id", false);
   await client.cancel(config, "src-id");
   assert.deepEqual(received, [
+    { url: "/status" },
+    { url: "/status?q=jazz&status=done&page=2&page_size=25" },
     { url: "/add", body: {
       inputs: ["https://example.test/a"], replace_existing: true, model: "htdemucs_ft", audio_format: "wav",
     } },

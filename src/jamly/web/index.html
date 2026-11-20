@@ -74,20 +74,6 @@
       </form>
       <p class="hint">The first use of each preset downloads model weights. Separation can take several minutes.
         Closing this page does not stop jobs. Only use media you are authorized to download.</p>
-      <div class="exports-header">
-        <div>
-          <h2>Exports</h2>
-          <p id="counts" role="status"></p>
-        </div>
-        <div class="exports-actions">
-          <button id="open-exports-folder" type="button" class="toolbar-btn" title="Open export folder">Open export folder</button>
-          <button id="rescan-exports" type="button" class="toolbar-btn" title="Rescan export folder for saved Jamly exports">Rescan folder</button>
-          <button id="clear-exports" type="button" class="toolbar-btn" title="Clear finished and failed items from this list (keeps files on disk)">Clear list</button>
-        </div>
-      </div>
-      <p class="hint">Completed files are already saved in your output folder. Click a stem to practice along with it here;
-        switching stems keeps your place, and the speed control keeps the original pitch.</p>
-      <ul id="jobs"></ul>
       <details>
         <summary>Optional Chrome / Edge extension</summary>
         <p>The companion works without an extension. Add it only if you want to send the current browser page.</p>
@@ -105,6 +91,57 @@
             in the browser's extensions page. No marketplace listing is provided yet.</p>
         </div>
       </details>
+      <div class="exports-header">
+        <div>
+          <h2>Exports</h2>
+          <p id="counts" role="status"></p>
+        </div>
+        <div class="exports-actions">
+          <button id="open-exports-folder" type="button" class="toolbar-btn" title="Open export folder">Open export folder</button>
+          <button id="rescan-exports" type="button" class="toolbar-btn" title="Rescan export folder for saved Jamly exports">Rescan folder</button>
+          <button id="clear-exports" type="button" class="toolbar-btn" title="Clear finished and failed items from this list (keeps files on disk)">Clear list</button>
+        </div>
+      </div>
+      <p class="hint">Completed files are already saved in your output folder. Click a stem to practice along with it here;
+        switching stems keeps your place, and the speed control keeps the original pitch.</p>
+      <div class="exports-filters" role="search" aria-label="Filter exports">
+        <input id="filter-query" type="search" placeholder="Search title, URL, or id" aria-label="Search exports">
+        <select id="filter-status" aria-label="Filter by status">
+          <option value="all">All statuses</option>
+          <option value="active">Active</option>
+          <option value="done">Complete</option>
+          <option value="error">Failed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+        <select id="filter-model" aria-label="Filter by preset">
+          <option value="all">All presets</option>
+        </select>
+        <select id="filter-format" aria-label="Filter by format">
+          <option value="all">All formats</option>
+          <option value="mp3">MP3</option>
+          <option value="wav">WAV</option>
+        </select>
+        <button id="filter-reset" type="button" class="toolbar-btn" hidden>Reset</button>
+      </div>
+      <p id="jobs-empty" class="hint" hidden></p>
+      <ul id="jobs"></ul>
+      <nav id="pagination" class="pagination" aria-label="Exports pages" hidden>
+        <div class="pagination-meta">
+          <span id="page-summary"></span>
+          <label class="page-size-label" for="page-size">Per page
+            <select id="page-size">
+              <option value="25" selected>25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </label>
+        </div>
+        <div class="pagination-controls">
+          <button id="page-prev" type="button" class="toolbar-btn">Previous</button>
+          <span id="page-indicator"></span>
+          <button id="page-next" type="button" class="toolbar-btn">Next</button>
+        </div>
+      </nav>
     </section>
   </main>
   <section id="player" aria-label="Practice player" hidden>

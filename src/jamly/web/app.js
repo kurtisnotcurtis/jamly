@@ -8,7 +8,10 @@
   let stopped = false;
   let refreshing = false;
   let timer;
+  let searchTimer;
+  let lastRenderKey = "";
   let connectionError = "";
+  const queryState = { q: "", status: "all", model: "all", format: "all", page: 1, page_size: 25 };
   const stages = {
     pending: "Queued", metadata: "Checking media", download: "Downloading audio",
     separate: "Loading model / separating audio",
@@ -493,6 +496,48 @@
     updateStemButtons();
   }
 
+  function renderPagination(status) {
+    const pagination = status.pagination || {
+      page: 1,
+      page_size: status.jobs.length || 25,
+      total_matched: status.jobs.length,
+      total_pages: 1,
+    };
+    queryState.page = pagination.page;
+    const filtered = Boolean(
+      queryState.q || queryState.status !== "all" || queryState.model !== "all" || queryState.format !== "all"
+    );
+    if (byId("filter-reset")) {
+      byId("filter-reset").hidden = !filtered;
+    }
+    const matchText = filtered ? ` | Matched: ${pagination.total_matched}` : "";
+    byId("counts").textContent =
+      `Queued: ${status.pending} | Complete: ${status.done} | Failed: ${status.failed}${matchText}`;
+    if (byId("jobs-empty")) {
+      const empty = byId("jobs-empty");
+      if (!status.jobs.length) {
+        empty.hidden = false;
+        empty.textContent = status.total === 0
+          ? "No exports yet."
+          : "No matching exports. Adjust or reset your filters.";
+      } else {
+        empty.hidden = true;
+      }
+    }
+    if (byId("pagination")) {
+      const nav = byId("pagination");
+      nav.hidden = pagination.total_matched === 0;
+      if (pagination.total_matched > 0) {
+        const start = (pagination.page - 1) * pagination.page_size + 1;
+        const end = start + status.jobs.length - 1;
+        byId("page-summary").textContent = `Showing ${start}-${end} of ${pagination.total_matched}`;
+        byId("page-indicator").textContent = `Page ${pagination.page} of ${pagination.total_pages}`;
+        byId("page-prev").disabled = pagination.page <= 1;
+        byId("page-next").disabled = pagination.page >= pagination.total_pages;
+      }
+    }
+  }
+
   function render(status) {
     models = status.models;
     stems = status.stems || [
@@ -500,11 +545,20 @@
     ];
     if (!initialized) {
       byId("model").replaceChildren();
+      if (byId("filter-model")) {
+        const allOpt = document.createElement("option");
+        allOpt.value = "all";
+        allOpt.textContent = "All presets";
+        byId("filter-model").replaceChildren(allOpt);
+      }
       for (const model of models) {
         const option = document.createElement("option");
         option.value = model.id;
         option.textContent = model.label;
         byId("model").appendChild(option);
+        if (byId("filter-model")) {
+          byId("filter-model").appendChild(option.cloneNode(true));
+        }
       }
       if (byId("stem")) {
         byId("stem").replaceChildren();
@@ -524,12 +578,24 @@
     }
     byId("workspace").hidden = false;
     byId("pairing").hidden = true;
-    byId("counts").textContent =
-      `Queued: ${status.pending} | Complete: ${status.done} | Failed: ${status.failed}`;
-    const hasTerminal = status.jobs.some(job => !["pending", "running"].includes(job.status));
+    renderPagination(status);
+    const hasTerminal = status.done > 0 || status.failed > 0 || status.jobs.some(
+      job => !["pending", "running"].includes(job.status)
+    );
     if (byId("clear-exports")) {
       byId("clear-exports").disabled = !hasTerminal;
     }
+    const renderKey = JSON.stringify({
+      jobs: status.jobs,
+      current: status.current,
+      pagination: status.pagination,
+      error: status.error,
+    });
+    if (!status.current && renderKey === lastRenderKey) {
+      updateStemButtons();
+      return;
+    }
+    lastRenderKey = renderKey;
     byId("jobs").replaceChildren();
     for (const job of status.jobs) {
       const row = document.createElement("li");
@@ -561,7 +627,7 @@
       const model = models.find(choice => choice.id === job.model)?.label || job.model;
       const stemTag = job.stem && job.stem !== "drums" ? ` | ${job.stem}` : "";
       const summary = document.createElement("span");
-      summary.textContent = `${job.audio_format.toUpperCase()} | ${model}${stemTag} |`;
+      summary.textContent = `${job.audio_format.toUpperCase()} | ${model}${stemTag}`;
       detail.append(summary, badge);
       info.appendChild(detail);
       const timingText = formatJobTimes(job, status, isCurrent);
@@ -658,12 +724,14 @@
       return;
     }
     refreshing = true;
+    let pollDelay = 2000;
     try {
-      const status = await jamlyClient.status(config);
+      const status = await jamlyClient.status(config, queryState);
       byId("connection").textContent = "Connected to your local companion. Jobs continue when this page closes.";
       if (byId("error").textContent === connectionError) byId("error").textContent = "";
       connectionError = "";
       render(status);
+      pollDelay = (status.pending > 0 || Boolean(status.current)) ? 2000 : 6000;
     } catch (error) {
       byId("connection").textContent = "Offline or session expired. Reopen Jamly; displayed jobs may be stale.";
       byId("pairing").hidden = false;
@@ -671,7 +739,7 @@
       showError(error);
     } finally {
       refreshing = false;
-      if (!stopped) timer = setTimeout(refresh, 2000);
+      if (!stopped) timer = setTimeout(refresh, pollDelay);
     }
   }
 
@@ -775,6 +843,43 @@
     byId("workspace").hidden = true;
     byId("connection").textContent = "Companion stopped. Open Jamly again to resume.";
   }));
+  byId("filter-query")?.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      queryState.q = byId("filter-query").value.trim();
+      queryState.page = 1;
+      refresh();
+    }, 200);
+  });
+  for (const [id, key] of [["filter-status", "status"], ["filter-model", "model"], ["filter-format", "format"]]) {
+    byId(id)?.addEventListener("change", () => {
+      queryState[key] = byId(id).value;
+      queryState.page = 1;
+      refresh();
+    });
+  }
+  byId("filter-reset")?.addEventListener("click", () => {
+    clearTimeout(searchTimer);
+    Object.assign(queryState, { q: "", status: "all", model: "all", format: "all", page: 1 });
+    byId("filter-query").value = "";
+    byId("filter-status").value = "all";
+    byId("filter-model").value = "all";
+    byId("filter-format").value = "all";
+    refresh();
+  });
+  byId("page-size")?.addEventListener("change", () => {
+    queryState.page_size = Number(byId("page-size").value) || 25;
+    queryState.page = 1;
+    refresh();
+  });
+  for (const [id, delta] of [["page-prev", -1], ["page-next", 1]]) {
+    byId(id)?.addEventListener("click", () => {
+      queryState.page = Math.max(1, queryState.page + delta);
+      refresh().then(() => {
+        document.querySelector(".exports-header")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    });
+  }
   byId("player-speed").addEventListener("input", applyPlaybackRate);
   byId("player-speed-reset").addEventListener("click", () => {
     byId("player-speed").value = "100";

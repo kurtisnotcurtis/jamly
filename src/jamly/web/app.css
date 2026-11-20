@@ -92,10 +92,38 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .checkbox input { width: auto; margin-top: 5px; accent-color: var(--accent); }
 #error, .error { color: var(--err); white-space: pre-wrap; overflow-wrap: anywhere; }
 #connection { color: var(--peach); font-size: 14px; margin: 14px 0; }
-.exports-header { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-top: 32px; }
+.exports-header { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-top: 24px; }
 .exports-header h2 { margin: 0; }
 .exports-header #counts { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
 .exports-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.exports-filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.8fr) repeat(3, minmax(110px, 1fr)) auto;
+  gap: 8px;
+  align-items: center;
+  margin: 14px 0 6px;
+}
+.exports-filters input, .exports-filters select {
+  padding: 7px 10px;
+  font-size: 13px;
+  background: var(--surface);
+}
+.pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--muted);
+}
+.pagination-meta, .pagination-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.page-size-label { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-weight: 500; font-size: 13px; }
+.page-size-label select { width: auto; padding: 5px 8px; font-size: 13px; background: var(--surface); }
+#page-indicator { font-variant-numeric: tabular-nums; }
 .toolbar-btn, .stem-btn, .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -251,7 +279,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .player-speed .toolbar-btn { padding: 5px 9px; font-size: 12px; }
 #player-close { font-size: 18px; line-height: 1; }
 body.has-player main { padding-bottom: 120px; }
-details { border-top: 1px solid var(--border); padding-top: 16px; margin-top: 28px; }
+details { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 18px; }
 summary { cursor: pointer; font-weight: 600; }
 code {
   overflow-wrap: anywhere;
@@ -269,6 +297,8 @@ code {
   .folder { flex-wrap: wrap; }
   .job-main { flex-direction: column; gap: 10px; }
   .job-actions { justify-content: flex-start; max-width: 100%; flex-wrap: wrap; }
+  .exports-filters { grid-template-columns: 1fr 1fr; }
+  .exports-filters input { grid-column: 1 / -1; }
   .player-inner { flex-wrap: wrap; gap: 10px; }
   #player-audio { order: 3; flex-basis: 100%; }
   body.has-player main { padding-bottom: 170px; }

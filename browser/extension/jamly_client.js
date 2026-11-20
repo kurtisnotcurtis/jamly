@@ -35,8 +35,15 @@
     }
   }
 
-  async function status(config) {
-    const result = await request(config, "/status");
+  async function status(config, query = {}) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined && value !== null && value !== "" && value !== "all") {
+        params.set(key, String(value));
+      }
+    }
+    const suffix = params.toString() ? "?" + params.toString() : "";
+    const result = await request(config, "/status" + suffix);
     if (result.api_version !== 3 || !Array.isArray(result.jobs)) {
       throw new Error("Backend and browser versions differ; update both Jamly components.");
     }
