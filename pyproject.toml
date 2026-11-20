@@ -60,6 +60,7 @@ where = ["src"]
 jamly = ["web/*.html", "web/*.js", "web/*.css", "web/*.svg"]
 
 [tool.setuptools.data-files]
+"share/jamly" = ["tools/jamly.ico"]
 "share/jamly/browser/extension" = [
     "browser/extension/manifest.json",
     "browser/extension/jamly_client.js",

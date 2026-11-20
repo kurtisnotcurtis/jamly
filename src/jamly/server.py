@@ -37,6 +37,7 @@ from .models import (
 from .outputs import audio_directory, read_manifest, resolve_output_path
 from .run import ItemResult, process_one
 from .runtime import open_directory
+from .tray import create_tray
 from .watch_queue import QueueError, WatchQueue, queue_owner
 
 
@@ -73,6 +74,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Additional exact browser origin; never use '*'")
     parser.add_argument("--allow-host", action="append", default=[],
                         help="Additional HTTP Host name for an explicitly configured proxy/LAN")
+    parser.add_argument("--no-tray", action="store_true",
+                        help="Disable the desktop system tray icon")
     return parser
 
 
@@ -123,6 +126,7 @@ class ItemServer:
             self._current = None
             self._current_cancel = None
             self._cancelled_ids = set()
+            self._tray = None
             self._error = None
             self.ui = CompanionUI(self.state_dir, enabled=_is_loopback_host(args.host))
             server_type = _IPv6Server if ":" in args.host else _HTTPServer
@@ -589,6 +593,8 @@ class ItemServer:
                 self.ui.close()
                 self._owner.__exit__(None, None, None)
                 self._closed = True
+            if self._tray is not None:
+                self._tray.stop()
 
 
 class QueueStatusHandler(BaseHTTPRequestHandler):
@@ -993,6 +999,9 @@ def main(argv=None) -> int:
         return 2
     print("Jamly listening on %s:%d" % (args.host, server._server.server_address[1]), flush=True)
     print("Pair browsers with: " + token_command(server.state_dir), flush=True)
+    tray = create_tray(server, enabled=not getattr(args, "no_tray", False))
+    server._tray = tray
+    tray.start()
     def interrupt(_signum, _frame):
         raise KeyboardInterrupt
     previous_signal = signal.signal(signal.SIGTERM, interrupt)
@@ -1001,6 +1010,7 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        tray.stop()
         server.stop()
         signal.signal(signal.SIGTERM, previous_signal)
     return 0

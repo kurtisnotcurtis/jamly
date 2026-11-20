@@ -17,6 +17,7 @@ datas += copy_metadata("jamly-audio-sep", recursive=True)
 datas += [
     (str(staging / "notices"), "notices"),
     (str(staging / "bundle.json"), "."),
+    (str(root / "tools" / "jamly.ico"), "share/jamly"),
 ]
 for kind in ("extension", "userscripts"):
     for path in (root / "browser" / kind).iterdir():

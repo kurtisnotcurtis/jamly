@@ -98,7 +98,10 @@ repopulate saved exports.
 and reconnects or starts a separate process. The backend publishes a private instance descriptor.
 Before sending its pairing credential, the launcher verifies a fresh HMAC challenge bound to the
 backend address and queue. A stale port occupied by another application cannot collect the token.
-Closing a page or the short-lived launcher does not stop jobs. Quit invokes orderly shutdown;
+Closing a page or the short-lived launcher does not stop jobs. On Windows desktop sessions, the loopback
+backend also shows a native Win32 system tray icon (disabled with `--no-tray`) displaying live
+status and actions to open the companion page, open the export folder, or quit; unsupported platforms
+and headless sessions fall back to a no-op tray. Quit invokes orderly shutdown;
 SIGTERM also cancels processing and preserves unfinished work for restart.
 
 Saved UI preferences are validated and atomically persisted separately from the queue. They override

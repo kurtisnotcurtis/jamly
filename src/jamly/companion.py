@@ -100,6 +100,8 @@ def _server_arguments(args, state: Path, queue: Path) -> list[str]:
         command.extend(("--allow-origin", origin))
     for host in args.allow_host:
         command.extend(("--allow-host", host))
+    if getattr(args, "no_tray", False):
+        command.append("--no-tray")
     return command
 
 
