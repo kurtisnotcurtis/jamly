@@ -96,7 +96,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .exports-header h2 { margin: 0; }
 .exports-header #counts { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
 .exports-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.toolbar-btn, .download-btn, .icon-btn {
+.toolbar-btn, .stem-btn, .icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -111,25 +111,38 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   text-decoration: none;
 }
 .toolbar-btn { padding: 8px 12px; }
-.download-btn {
-  padding: 7px 11px;
+.stem-btn {
+  gap: 4px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
   background: rgba(240, 138, 158, 0.14);
   border-color: rgba(240, 138, 158, 0.42);
   color: #fbd2db;
 }
-.download-btn:hover:not(:disabled) {
+.stem-btn:hover:not(:disabled) {
   background: rgba(240, 138, 158, 0.24);
   border-color: var(--accent);
 }
+.stem-btn.active, .stem-btn.active:hover:not(:disabled) {
+  background: linear-gradient(180deg, #f6a0b1 0%, var(--accent) 100%);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.stem-btn.playing { box-shadow: 0 0 0 3px rgba(240, 138, 158, 0.25); }
 .icon-btn { padding: 7px; min-width: 34px; min-height: 34px; background: var(--bg-alt); }
 .toolbar-btn:hover:not(:disabled), .icon-btn:hover:not(:disabled) {
   background: var(--surface-hover);
   border-color: var(--accent);
 }
-.icon-btn.danger:hover:not(:disabled) {
+.icon-btn.danger:hover:not(:disabled), .cancel-btn:hover:not(:disabled) {
   border-color: var(--err);
   color: var(--err);
 }
+.cancel-btn { padding: 7px 11px; background: var(--bg-alt); }
 #jobs { list-style: none; padding: 0; margin: 14px 0 0; }
 #jobs li {
   padding: 16px;
@@ -142,9 +155,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 #jobs p { margin: 2px 0; }
 .job-main { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .job-info { min-width: 0; flex: 1; }
-.job-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .job-title { font-weight: 700; }
 .status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 11px;
   font-weight: 700;
   padding: 2px 8px;
@@ -153,6 +168,26 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border: 1px solid var(--border);
   background: var(--bg-alt);
   color: var(--muted);
+}
+.status-icon {
+  flex-shrink: 0;
+  display: block;
+}
+@keyframes jamly-frame-a {
+  0% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+@keyframes jamly-frame-b {
+  0% { opacity: 0; }
+  50%, 100% { opacity: 1; }
+}
+.status-icon .frame-a {
+  animation: jamly-frame-a 0.8s steps(1, end) infinite;
+  animation-delay: var(--jamly-anim-delay, 0ms);
+}
+.status-icon .frame-b {
+  animation: jamly-frame-b 0.8s steps(1, end) infinite;
+  animation-delay: var(--jamly-anim-delay, 0ms);
 }
 .status-badge.done {
   background: rgba(110, 242, 180, 0.14);
@@ -169,18 +204,53 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: var(--err);
   border-color: rgba(255, 182, 182, 0.35);
 }
-.job-detail { color: var(--muted); font-size: 13px; }
-.job-times { color: var(--muted); font-size: 12px; opacity: 0.88; }
-.job-actions {
+.status-badge.muted { color: var(--muted); }
+.job-detail {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
   gap: 6px;
-  flex-shrink: 0;
-  max-width: 58%;
+  margin: 3px 0;
+  color: var(--muted);
+  font-size: 13px;
 }
-.job-controls { display: inline-flex; align-items: center; gap: 6px; }
+.job-times { color: var(--muted); font-size: 12px; opacity: 0.88; }
+.job-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+  max-width: 62%;
+}
+.stem-group { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.stem-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, auto); gap: 6px; }
+.stem-caption { max-width: 140px; font-size: 10px; color: var(--muted); text-align: center; line-height: 1.25; }
+.job-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.control-row { display: flex; justify-content: flex-end; gap: 6px; }
+#player {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  background: rgba(35, 23, 32, 0.96);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.35);
+}
+.player-inner { max-width: 960px; margin: auto; padding: 12px 20px; display: flex; align-items: center; gap: 16px; }
+.player-info { min-width: 0; flex: 0 1 220px; }
+.player-title { margin: 0; font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.player-stem { margin: 0; font-size: 12px; color: var(--peach); }
+#player-audio { flex: 1; min-width: 0; height: 40px; }
+.player-speed { display: flex; align-items: center; gap: 8px; font-size: 13px; white-space: nowrap; }
+.player-speed label { margin: 0; font-size: 13px; }
+.player-speed input[type="range"] { width: 110px; padding: 0; border: 0; background: transparent; accent-color: var(--accent); }
+.player-speed output { min-width: 38px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.player-speed .toolbar-btn { padding: 5px 9px; font-size: 12px; }
+#player-close { font-size: 18px; line-height: 1; }
+body.has-player main { padding-bottom: 120px; }
 details { border-top: 1px solid var(--border); padding-top: 16px; margin-top: 28px; }
 summary { cursor: pointer; font-weight: 600; }
 code {
@@ -198,5 +268,8 @@ code {
   .settings { grid-template-columns: 1fr; }
   .folder { flex-wrap: wrap; }
   .job-main { flex-direction: column; gap: 10px; }
-  .job-actions { justify-content: flex-start; max-width: 100%; }
+  .job-actions { justify-content: flex-start; max-width: 100%; flex-wrap: wrap; }
+  .player-inner { flex-wrap: wrap; gap: 10px; }
+  #player-audio { order: 3; flex-basis: 100%; }
+  body.has-player main { padding-bottom: 170px; }
 }

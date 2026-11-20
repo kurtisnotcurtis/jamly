@@ -85,7 +85,8 @@
           <button id="clear-exports" type="button" class="toolbar-btn" title="Clear finished and failed items from this list (keeps files on disk)">Clear list</button>
         </div>
       </div>
-      <p class="hint">Completed files are already saved in your output folder. Download buttons save a copy via your browser.</p>
+      <p class="hint">Completed files are already saved in your output folder. Click a stem to practice along with it here;
+        switching stems keeps your place, and the speed control keeps the original pitch.</p>
       <ul id="jobs"></ul>
       <details>
         <summary>Optional Chrome / Edge extension</summary>
@@ -106,5 +107,21 @@
       </details>
     </section>
   </main>
+  <section id="player" aria-label="Practice player" hidden>
+    <div class="player-inner">
+      <div class="player-info">
+        <p id="player-title" class="player-title"></p>
+        <p id="player-stem" class="player-stem" role="status"></p>
+      </div>
+      <audio id="player-audio" controls preload="auto"></audio>
+      <div class="player-speed">
+        <label for="player-speed">Speed</label>
+        <input id="player-speed" type="range" min="50" max="150" step="5" value="100">
+        <output id="player-speed-value" for="player-speed">100%</output>
+        <button id="player-speed-reset" type="button" class="toolbar-btn">1x</button>
+      </div>
+      <button id="player-close" type="button" class="icon-btn" title="Close player" aria-label="Close player">&times;</button>
+    </div>
+  </section>
 </body>
 </html>

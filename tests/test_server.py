@@ -372,13 +372,10 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request("GET", output["url"].replace("generation-one", "stale"))[0], 409)
         self.assertEqual(self.request("GET", "/outputs/" + self.wid + "/../server-token")[0], 404)
         form_headers = {"Content-Type": "application/x-www-form-urlencoded", "Origin": self.app.base_url}
-        download_path = output["url"].replace("/outputs/", "/app/download/", 1)
-        code, downloaded, _ = self.request("POST", download_path,
-                                           urlencode({"token": "test-token"}).encode(),
-                                           auth=False, headers=form_headers, raw=True)
-        self.assertEqual((code, downloaded), (200, b"drums"))
-        self.assertEqual(self.request("POST", download_path, b"token=wrong",
-                                     auth=False, headers=form_headers)[0], 401)
+        retired_download = output["url"].replace("/outputs/", "/app/download/", 1)
+        code, _, _ = self.request("POST", retired_download, urlencode({"token": "test-token"}).encode(),
+                                  auth=False, headers=form_headers, raw=True)
+        self.assertNotEqual(code, 200)
 
     def test_local_file_upload_and_retained_multi_preset_exports(self):
         def process(wid, args, **_kwargs):

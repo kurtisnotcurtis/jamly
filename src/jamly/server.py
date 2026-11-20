@@ -677,8 +677,8 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed_url = urlsplit(self.path)
         path = parsed_url.path
-        if path == "/app/session" or path.startswith("/app/download/"):
-            self._companion_form(path)
+        if path == "/app/session":
+            self._companion_session()
             return
         if path == "/app/upload":
             self._upload_local_file(parsed_url.query)
@@ -794,9 +794,8 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
         except (RuntimeError, subprocess.SubprocessError) as exc:
             self._json({"error": str(exc)}, 503)
 
-    def _companion_form(self, path: str):
-        bootstrap = path == "/app/session"
-        if not self._allowed_request(auth=False, bootstrap=bootstrap):
+    def _companion_session(self):
+        if not self._allowed_request(auth=False, bootstrap=True):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -807,17 +806,10 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
             self.connection.settimeout(10)
             values = parse_qs(self.rfile.read(length).decode("utf-8"),
                               strict_parsing=True, max_num_fields=1)
-            field = "ticket" if bootstrap else "token"
-            if set(values) != {field} or len(values[field]) != 1:
+            if set(values) != {"ticket"} or len(values["ticket"]) != 1:
                 raise ValueError("Invalid companion form")
-            if bootstrap:
-                page, policy = self.app.ui.session_page(values[field][0])
-                self._bytes(page, "text/html; charset=utf-8", policy=policy)
-            elif self.app.ui.enabled and self.app.authorized("Bearer " + values[field][0]):
-                url = urlsplit(self.path.replace("/app/download/", "/outputs/", 1))
-                self._output(url)
-            else:
-                self._json({"error": "Session expired. Open Jamly again."}, 401)
+            page, policy = self.app.ui.session_page(values["ticket"][0])
+            self._bytes(page, "text/html; charset=utf-8", policy=policy)
         except (ValueError, UnicodeError) as exc:
             self.close_connection = True
             self._json({"error": str(exc)}, 400)

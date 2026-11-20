@@ -11,9 +11,9 @@
   let connectionError = "";
   const stages = {
     pending: "Queued", metadata: "Checking media", download: "Downloading audio",
-    separate: "Loading model / separating audio (first use downloads weights)",
+    separate: "Loading model / separating audio",
     mix: "Preparing exports", publish: "Saving files", done: "Complete",
-    skipped: "Reused existing files", error: "Failed", cancelled: "Cancelled", running: "Working",
+    skipped: "Reused existing files", error: "Failed", cancelling: "Cancelling", cancelled: "Cancelled", running: "Working",
   };
 
   function showError(error) {
@@ -144,10 +144,31 @@
 
   const SVG_NS = "http://www.w3.org/2000/svg";
   const ICONS = {
-    download: [
-      "M12 3v11",
-      "M8 10l4 4 4-4",
-      "M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2",
+    drum: [
+      "M4 10c0-1.66 3.58-3 8-3s8 1.34 8 3-3.58 3-8 3-8-1.34-8-3z",
+      "M4 10v7c0 1.66 3.58 3 8 3s8-1.34 8-3v-7",
+      "M8 12.6v6.9",
+      "M16 12.6v6.9",
+      "M6 2.5l5 5.5",
+      "M18 2.5l-5 5.5",
+    ],
+    "drum-off": [
+      "M4 10c0-1.66 3.58-3 8-3s8 1.34 8 3-3.58 3-8 3-8-1.34-8-3z",
+      "M4 10v7c0 1.66 3.58 3 8 3s8-1.34 8-3v-7",
+      "M6 2.5l5 5.5",
+      "M18 2.5l-5 5.5",
+      "M2.5 21.5l19-19",
+    ],
+    note: [
+      "M9 18V5l12-2v13",
+      "M3 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0",
+      "M15 16a3 3 0 1 0 6 0a3 3 0 1 0 -6 0",
+    ],
+    "note-off": [
+      "M9 18V5l12-2v13",
+      "M3 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0",
+      "M15 16a3 3 0 1 0 6 0a3 3 0 1 0 -6 0",
+      "M2.5 21.5l19-19",
     ],
     folder: [
       "M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
@@ -175,7 +196,96 @@
       "M18 6L6 18",
       "M6 6l12 12",
     ],
+    stop: [
+      "M6 6h12v12H6z",
+    ],
   };
+
+  const STATUS_ICONS = {
+    "jar-fill": [
+      [
+        ["M7 6.2H17A1.1 1.1 0 0 1 17 8.4H16.4L18.5 10.1C18.8 10.4 19 10.9 19 11.4V20A2.5 2.5 0 0 1 16.5 22.5H7.5A2.5 2.5 0 0 1 5 20V11.4C5 10.9 5.2 10.4 5.5 10.1L7.6 8.4H7A1.1 1.1 0 0 1 7 6.2ZM7 11.2V19.6A1 1 0 0 0 8 20.6H16A1 1 0 0 0 17 19.6V11.2Z", "evenodd"],
+        ["M5 1.2C8.8 1.2 11.8 2.4 12.8 5.2H10.2C9.4 3.8 7.6 3.2 5 3.2Z"],
+        ["M12 7.8C13 9.2 13.7 10.1 13.7 11A1.7 1.7 0 0 1 10.3 11C10.3 10.1 11 9.2 12 7.8Z"],
+        ["M7 17.5Q9.5 16.4 12 17.5T17 17.5V19.6A1 1 0 0 1 16 20.6H8A1 1 0 0 1 7 19.6Z"],
+      ],
+      [
+        ["M7 6.2H17A1.1 1.1 0 0 1 17 8.4H16.4L18.5 10.1C18.8 10.4 19 10.9 19 11.4V20A2.5 2.5 0 0 1 16.5 22.5H7.5A2.5 2.5 0 0 1 5 20V11.4C5 10.9 5.2 10.4 5.5 10.1L7.6 8.4H7A1.1 1.1 0 0 1 7 6.2ZM7 11.2V19.6A1 1 0 0 0 8 20.6H16A1 1 0 0 0 17 19.6V11.2Z", "evenodd"],
+        ["M5 1.2C9.5 1.2 13.2 2.8 13.2 7.4V12.5H10.8V7.4C10.8 4.4 8.6 3.2 5 3.2Z"],
+        ["M7 12.4Q9.5 13.5 12 12.4T17 12.4V19.6A1 1 0 0 1 16 20.6H8A1 1 0 0 1 7 19.6Z"],
+      ],
+    ],
+    "toast-spread": [
+      [
+        ["M2 10.5C2 7.7 5.2 6.5 9.3 6.5C13.4 6.5 16.6 7.7 16.6 10.5C16.6 12.1 15.7 13 15.1 13.5V20.5A2 2 0 0 1 13.1 22.5H5.5A2 2 0 0 1 3.5 20.5V13.5C2.9 13 2 12.1 2 10.5ZM4.1 10.6C4.1 9.1 6.2 8.5 9.3 8.5C12.4 8.5 14.5 9.1 14.5 10.6C14.5 11.5 13.8 12 13.2 12.4V20.4H5.4V12.4C4.8 12 4.1 11.5 4.1 10.6Z", "evenodd"],
+        ["M6.1 13.3C6.1 11.9 7.5 11.2 9 11.7C10.1 12.1 10.5 13.4 10 14.6C9.4 15.8 7.6 16.1 6.6 15.2C6.1 14.7 6.1 14 6.1 13.3Z"],
+        ["M17.2 1.4C18.3 0.7 19.7 1 20.4 2.1C21.1 3.2 20.8 4.6 19.7 5.3L16.3 7.4L14.5 4.6ZM14 5.2L15.7 7.9L10.3 11.3C9.4 11.9 8.1 11.3 8.3 10.2C8.5 9.1 9.3 8 10.7 7.1Z"],
+      ],
+      [
+        ["M2 10.5C2 7.7 5.2 6.5 9.3 6.5C13.4 6.5 16.6 7.7 16.6 10.5C16.6 12.1 15.7 13 15.1 13.5V20.5A2 2 0 0 1 13.1 22.5H5.5A2 2 0 0 1 3.5 20.5V13.5C2.9 13 2 12.1 2 10.5ZM4.1 10.6C4.1 9.1 6.2 8.5 9.3 8.5C12.4 8.5 14.5 9.1 14.5 10.6C14.5 11.5 13.8 12 13.2 12.4V20.4H5.4V12.4C4.8 12 4.1 11.5 4.1 10.6Z", "evenodd"],
+        ["M6 12C7.8 11 11.2 11 12.6 12.3V17.4C12.6 18.6 11.1 19.2 9.3 19.2C7.5 19.2 6 18.5 6 17.2Z"],
+        ["M20.2 8.2C21.5 7.8 22.8 8.6 23.1 9.9C23.4 11.2 22.6 12.5 21.3 12.8L17.4 13.8L16.4 10.3ZM15.7 10.6L16.7 14L10.6 15.7C9.6 16 8.6 15.1 9 14C9.4 13 10.5 12.1 12.1 11.6Z"],
+      ],
+    ],
+    "toast-cut": [
+      [
+        ["M4.5 12.6C4.5 10 7.8 9 12 9C16.2 9 19.5 10 19.5 12.6C19.5 14.1 18.6 14.9 18 15.4V21A2 2 0 0 1 16 23H8A2 2 0 0 1 6 21V15.4C5.4 14.9 4.5 14.1 4.5 12.6Z"],
+        ["M10.8 1A1.2 1.2 0 0 1 13.2 1V4.2H10.8ZM10.4 4.8H13.6V6.6C13.6 7.4 12.8 8 11.6 8C10.8 8 10.4 7.5 10.4 6.8Z"],
+      ],
+      [
+        ["M2.3 12.5C2.3 10 5.3 9 9.4 8.9L10.2 23H5.8A2 2 0 0 1 3.8 21V15.1C3.1 14.6 2.3 13.8 2.3 12.5Z"],
+        ["M21.7 12.5C21.7 10 18.7 9 14.6 8.9L13.8 23H18.2A2 2 0 0 0 20.2 21V15.1C20.9 14.6 21.7 13.8 21.7 12.5Z"],
+        ["M10.8 2.5A1.2 1.2 0 0 1 13.2 2.5V7.2H10.8ZM10.8 8H13.2V18.8C13.2 19.8 12.5 20.6 11.8 20.6C11.1 20.6 10.8 19.9 10.8 19.1Z"],
+      ],
+    ],
+    "jar-explode": [
+      [
+        ["M7.5 2L16.3 0.6L16.7 3.1L7.9 4.5Z"],
+        ["M4.3 9.4L9.5 10.8L7.5 14.3L10.2 16.7L8.7 21.8H6.4A2.2 2.2 0 0 1 4.2 19.6V11.2Z"],
+        ["M19.7 9.4L14.5 10.8L16.5 14.3L13.8 16.7L15.3 21.8H17.6A2.2 2.2 0 0 0 19.8 19.6V11.2Z"],
+        ["M9.8 18.8L12 17.5L14.2 18.8L13.8 22.2H10.2Z"],
+        ["M1.8 5.2L5.5 6.8L4.5 8.7L1 6.9ZM22.2 5.2L23 6.9L19.5 8.7L18.5 6.8ZM11.1 5.2H12.9L13.6 9.6H10.4Z"],
+      ],
+    ],
+  };
+
+  const STAGE_ICONS = {
+    metadata: "jar-fill",
+    download: "jar-fill",
+    separate: "toast-spread",
+    running: "toast-spread",
+    mix: "toast-cut",
+    publish: "toast-cut",
+    error: "jar-explode",
+  };
+
+  function statusIcon(name) {
+    const frames = STATUS_ICONS[name];
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("class", "status-icon");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", "18");
+    svg.setAttribute("height", "18");
+    svg.setAttribute("fill", "currentColor");
+    svg.setAttribute("aria-hidden", "true");
+    if (frames.length > 1) {
+      svg.style.setProperty("--jamly-anim-delay", `-${Math.floor(performance.now() % 800)}ms`);
+    }
+    frames.forEach((paths, index) => {
+      const group = document.createElementNS(SVG_NS, "g");
+      if (frames.length > 1) {
+        group.setAttribute("class", index === 0 ? "frame-a" : "frame-b");
+      }
+      for (const [d, fillRule] of paths) {
+        const path = document.createElementNS(SVG_NS, "path");
+        path.setAttribute("d", d);
+        if (fillRule) path.setAttribute("fill-rule", fillRule);
+        group.appendChild(path);
+      }
+      svg.appendChild(group);
+    });
+    return svg;
+  }
 
   function svgIcon(name) {
     const svg = document.createElementNS(SVG_NS, "svg");
@@ -214,17 +324,48 @@
     return element;
   }
 
-  function downloadButton(text, ariaLabel, task) {
+  const STEM_SHORT = { vocals: "vox", bass: "bass", guitar: "gtr", piano: "keys", other: "other" };
+
+  function stemButton(job, output, label) {
     const element = document.createElement("button");
     element.type = "button";
-    element.className = "download-btn";
+    element.className = "stem-btn";
+    element.dataset.url = output.url;
+    const ariaLabel = "Play " + label;
     element.title = ariaLabel;
     element.setAttribute("aria-label", ariaLabel);
-    const span = document.createElement("span");
-    span.textContent = text;
-    element.append(svgIcon("download"), span);
-    element.addEventListener("click", () => action(element, task));
+    const negative = output.kind.startsWith("no_");
+    const base = negative ? output.kind.slice(3) : output.kind;
+    if (base === "drums") {
+      element.appendChild(svgIcon(negative ? "drum-off" : "drum"));
+    } else {
+      element.appendChild(svgIcon(negative ? "note-off" : "note"));
+      const span = document.createElement("span");
+      span.textContent = (negative ? "no " : "") + (STEM_SHORT[base] || base);
+      element.appendChild(span);
+    }
+    element.addEventListener("click", () => action(element, () => playOutput(job, output, label)));
     return element;
+  }
+
+  function stemGroup(job, outputs, labelFor, caption) {
+    const group = document.createElement("div");
+    group.className = "stem-group";
+    const grid = document.createElement("div");
+    grid.className = "stem-grid";
+    for (const output of outputs) {
+      if (output.kind === "metadata") continue;
+      grid.appendChild(stemButton(job, output, labelFor(output)));
+    }
+    if (!grid.childElementCount) return null;
+    group.appendChild(grid);
+    if (caption) {
+      const text = document.createElement("span");
+      text.className = "stem-caption";
+      text.textContent = caption;
+      group.appendChild(text);
+    }
+    return group;
   }
 
   function sourceControl(job) {
@@ -252,21 +393,104 @@
     }));
   }
 
-  function download(output) {
-    const url = new URL(jamlyClient.outputURL(config, output.url));
-    const form = document.createElement("form");
-    form.method = "post";
-    form.target = "_blank";
-    form.rel = "noopener";
-    form.action = "/app/download/" + url.pathname.slice("/outputs/".length) + url.search;
-    const input = document.createElement("input");
-    input.type = "hidden";
-    input.name = "token";
-    input.value = config.token;
-    form.appendChild(input);
-    document.body.appendChild(form);
-    form.submit();
-    form.remove();
+  const player = { url: null, jobId: null, objectURL: null, controller: null };
+
+  function playbackRate() {
+    return Number(byId("player-speed").value) / 100;
+  }
+
+  function applyPlaybackRate() {
+    const audio = byId("player-audio");
+    const rate = playbackRate();
+    audio.preservesPitch = true;
+    audio.mozPreservesPitch = true;
+    audio.webkitPreservesPitch = true;
+    audio.defaultPlaybackRate = rate;
+    audio.playbackRate = rate;
+    byId("player-speed-value").textContent = Math.round(rate * 100) + "%";
+  }
+
+  function updateStemButtons() {
+    const audio = byId("player-audio");
+    for (const button of document.querySelectorAll("#jobs .stem-btn")) {
+      const active = Boolean(player.url) && button.dataset.url === player.url;
+      button.classList.toggle("active", active);
+      button.classList.toggle("playing", active && !audio.paused);
+      button.setAttribute("aria-pressed", String(active));
+    }
+  }
+
+  async function playOutput(job, output, label) {
+    const audio = byId("player-audio");
+    if (player.url === output.url && !player.controller) {
+      if (audio.paused) {
+        await audio.play();
+      } else {
+        audio.pause();
+      }
+      return;
+    }
+    const sameTrack = player.jobId === job.watch_id && Boolean(player.url);
+    const resumeAt = sameTrack ? audio.currentTime : 0;
+    const resume = sameTrack ? !audio.paused : true;
+    player.controller?.abort();
+    const controller = new AbortController();
+    player.controller = controller;
+    byId("player").hidden = false;
+    document.body.classList.add("has-player");
+    byId("player-title").textContent = job.title || job.watch_id;
+    byId("player-stem").textContent = `Loading ${label}...`;
+    try {
+      const response = await fetch(jamlyClient.outputURL(config, output.url), {
+        headers: { Authorization: "Bearer " + config.token },
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        let message = "";
+        try {
+          message = (await response.json()).error || "";
+        } catch (_error) {
+          // Non-JSON error bodies fall back to the HTTP status below.
+        }
+        throw new Error(message || "Could not load this stem (HTTP " + response.status + ")");
+      }
+      const data = await response.blob();
+      const type = /\.wav$/i.test(output.name || "") ? "audio/wav" : "audio/mpeg";
+      const objectURL = URL.createObjectURL(new Blob([data], { type }));
+      const previous = player.objectURL;
+      Object.assign(player, { url: output.url, jobId: job.watch_id, objectURL, controller: null });
+      audio.src = objectURL;
+      if (previous) URL.revokeObjectURL(previous);
+      audio.addEventListener("loadedmetadata", () => {
+        if (resumeAt && Number.isFinite(audio.duration)) {
+          audio.currentTime = Math.min(resumeAt, audio.duration);
+        }
+        applyPlaybackRate();
+        if (resume) audio.play().catch(() => updateStemButtons());
+      }, { once: true });
+      audio.load();
+      byId("player-stem").textContent = label;
+      updateStemButtons();
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      if (player.controller === controller) player.controller = null;
+      byId("player-stem").textContent = player.url ? "Could not switch stems" : "Could not load stem";
+      throw error;
+    }
+  }
+
+  function closePlayer() {
+    const audio = byId("player-audio");
+    player.controller?.abort();
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    if (player.objectURL) URL.revokeObjectURL(player.objectURL);
+    Object.assign(player, { url: null, jobId: null, objectURL: null, controller: null });
+    byId("player").hidden = true;
+    document.body.classList.remove("has-player");
+    updateStemButtons();
   }
 
   function render(status) {
@@ -313,29 +537,32 @@
       main.className = "job-main";
       const info = document.createElement("div");
       info.className = "job-info";
-      const titleRow = document.createElement("div");
-      titleRow.className = "job-title-row";
       const title = document.createElement("p");
       title.className = "job-title";
       title.textContent = job.title || job.watch_id;
-      titleRow.appendChild(title);
+      info.appendChild(title);
       const isCurrent = status.current?.watch_id === job.watch_id;
-      const stage = isCurrent ? status.current.stage : job.status;
+      const isCancelling = isCurrent && Boolean(status.current?.cancelling);
+      const stage = isCancelling ? "cancelling" : (isCurrent ? status.current.stage : job.status);
       const badge = document.createElement("span");
       const badgeTone = (job.status === "done" || job.status === "skipped")
         ? "done"
-        : (["pending", "running"].includes(job.status) ? "active" : "error");
+        : (["pending", "running"].includes(job.status)
+          ? "active"
+          : (job.status === "cancelled" ? "muted" : "error"));
       badge.className = `status-badge ${badgeTone}`;
-      badge.textContent = stages[stage] || stage;
-      titleRow.appendChild(badge);
-      info.appendChild(titleRow);
-      const detail = document.createElement("p");
+      const iconName = STAGE_ICONS[stage];
+      if (iconName) badge.appendChild(statusIcon(iconName));
+      const progressText = isCurrent && !isCancelling && typeof status.current?.progress === "number"
+        ? ` ${status.current.progress}%` : "";
+      badge.appendChild(document.createTextNode((stages[stage] || stage) + progressText));
+      const detail = document.createElement("div");
       detail.className = "job-detail";
-      const progressText = isCurrent && typeof status.current?.progress === "number"
-        ? ` (${status.current.progress}%)` : "";
       const model = models.find(choice => choice.id === job.model)?.label || job.model;
       const stemTag = job.stem && job.stem !== "drums" ? ` | ${job.stem}` : "";
-      detail.textContent = `${stages[stage] || stage}${progressText} | ${model}${stemTag} | ${job.audio_format.toUpperCase()}`;
+      const summary = document.createElement("span");
+      summary.textContent = `${job.audio_format.toUpperCase()} | ${model}${stemTag} |`;
+      detail.append(summary, badge);
       info.appendChild(detail);
       const timingText = formatJobTimes(job, status, isCurrent);
       if (timingText) {
@@ -356,44 +583,58 @@
       actions.className = "job-actions";
       const hasOutputs = Boolean(job.outputs.length || job.exports?.length);
       if (hasOutputs) {
-        for (const output of job.outputs) {
-          if (output.kind === "metadata") continue;
-          const label = outputLabel(output.kind);
-          actions.appendChild(downloadButton(label, "Save a copy: " + label, () => download(output)));
-        }
+        const primary = stemGroup(job, job.outputs, output => outputLabel(output.kind), "");
+        if (primary) actions.appendChild(primary);
         for (const exp of job.exports || []) {
           const expModel = models.find(choice => choice.id === exp.model)?.label || exp.model;
           const expStem = exp.stem && exp.stem !== "drums" ? ` ${exp.stem}` : "";
           const expFormat = String(exp.audio_format || "").toUpperCase();
-          for (const output of exp.outputs || []) {
-            if (output.kind === "metadata") continue;
-            const kindLabel = outputLabel(output.kind);
-            actions.appendChild(downloadButton(
-              `${kindLabel} (${expModel}${expStem} ${expFormat})`,
-              `Save a copy: ${kindLabel} (${expModel}${expStem} ${expFormat})`,
-              () => download(output),
-            ));
-          }
+          const suffix = `${expModel}${expStem} ${expFormat}`;
+          const group = stemGroup(job, exp.outputs || [],
+            output => `${outputLabel(output.kind)} (${suffix})`, suffix);
+          if (group) actions.appendChild(group);
         }
       }
       const controls = document.createElement("div");
       controls.className = "job-controls";
+      const topRow = document.createElement("div");
+      topRow.className = "control-row";
+      const bottomRow = document.createElement("div");
+      bottomRow.className = "control-row";
       const sourceBtn = sourceControl(job);
-      if (sourceBtn) controls.appendChild(sourceBtn);
+      if (sourceBtn) topRow.appendChild(sourceBtn);
       if (hasOutputs) {
-        controls.appendChild(iconButton("folder", "Show files in folder", () => post("/app/open-folder", {
+        topRow.appendChild(iconButton("folder", "Show files in folder", () => post("/app/open-folder", {
           id: job.watch_id,
         })));
       }
-      if (!["pending", "running"].includes(job.status)) {
-        controls.appendChild(iconButton("retry", "Retry / check files", async () => {
+      if (["pending", "running"].includes(job.status)) {
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "toolbar-btn cancel-btn";
+        cancelBtn.disabled = isCancelling;
+        cancelBtn.title = isCancelling ? "Cancelling processing" : "Cancel processing";
+        cancelBtn.setAttribute("aria-label", cancelBtn.title);
+        const label = document.createElement("span");
+        label.textContent = isCancelling ? "Cancelling..." : "Cancel";
+        cancelBtn.append(svgIcon("stop"), label);
+        cancelBtn.addEventListener("click", () => action(cancelBtn, async () => {
+          await jamlyClient.cancel(config, job.watch_id);
+          await refresh();
+        }));
+        bottomRow.appendChild(cancelBtn);
+      } else {
+        bottomRow.appendChild(iconButton("retry", "Retry / check files", async () => {
           await jamlyClient.retry(config, job.watch_id, byId("replace").checked);
           await refresh();
         }));
-        controls.appendChild(iconButton("clear", "Remove from list", async () => {
+        bottomRow.appendChild(iconButton("clear", "Remove from list", async () => {
           await post("/app/clear", { id: job.watch_id });
           await refresh();
         }, "danger"));
+      }
+      for (const controlRow of [topRow, bottomRow]) {
+        if (controlRow.childElementCount) controls.appendChild(controlRow);
       }
       if (controls.childElementCount) {
         actions.appendChild(controls);
@@ -404,6 +645,7 @@
       row.appendChild(main);
       byId("jobs").appendChild(row);
     }
+    updateStemButtons();
     if (status.error) showError(new Error(status.error));
   }
 
@@ -528,10 +770,21 @@
     await post("/app/stop");
     stopped = true;
     clearTimeout(timer);
+    closePlayer();
     sessionStorage.removeItem("jamly-token");
     byId("workspace").hidden = true;
     byId("connection").textContent = "Companion stopped. Open Jamly again to resume.";
   }));
+  byId("player-speed").addEventListener("input", applyPlaybackRate);
+  byId("player-speed-reset").addEventListener("click", () => {
+    byId("player-speed").value = "100";
+    applyPlaybackRate();
+  });
+  byId("player-close").addEventListener("click", closePlayer);
+  for (const eventName of ["play", "pause", "ended"]) {
+    byId("player-audio").addEventListener(eventName, updateStemButtons);
+  }
+  applyPlaybackRate();
   document.addEventListener("visibilitychange", () => {
     clearTimeout(timer);
     if (!document.hidden) refresh();

@@ -199,9 +199,6 @@ try {
     'location.pathname === "/app/" && document.getElementById("workspace")?.hidden === false'
   ), "automatic companion pairing");
   assert.equal(await cdp.evaluate("location.search + location.hash"), "");
-  const downloads = path.join(root, "downloads");
-  await fs.mkdir(downloads);
-  await cdp.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: downloads });
   await cdp.evaluate(`(() => {
     const model = document.getElementById("model");
     model.value = "htdemucs_ft"; model.dispatchEvent(new Event("change"));
@@ -218,29 +215,36 @@ try {
     if (error) throw new Error(error);
     const jobError = await cdp.evaluate('document.querySelector("#jobs .error")?.textContent');
     if (jobError) throw new Error(jobError);
-    return cdp.evaluate('document.getElementById("jobs")?.textContent.includes("Complete | Higher quality | WAV")');
+    return cdp.evaluate(`(() => {
+      const badge = document.querySelector("#jobs .status-badge.done");
+      return Boolean(badge) && document.getElementById("jobs").textContent.includes("WAV | Higher quality");
+    })()`);
   }, "real Higher quality export", 600000);
   for (const kind of ["drums", "drumless"]) {
-    await cdp.evaluate(`Array.from(document.querySelectorAll("#jobs button"))
-      .find(button => button.getAttribute("aria-label") === ${JSON.stringify("Save a copy: " + kind)}).click()`);
+    await cdp.evaluate(`Array.from(document.querySelectorAll("#jobs .stem-btn"))
+      .find(button => button.getAttribute("aria-label") === ${JSON.stringify("Play " + kind)}).click()`);
+    await waitFor(async () => {
+      const error = await cdp.evaluate('document.getElementById("error")?.textContent');
+      if (error) throw new Error(error);
+      return cdp.evaluate(`(() => {
+        const audio = document.getElementById("player-audio");
+        return document.getElementById("player-stem").textContent === ${JSON.stringify(kind)}
+          && audio.readyState >= 1 && audio.duration > 0;
+      })()`);
+    }, "authenticated in-page playback of " + kind);
   }
-  await waitFor(async () => {
-    const files = await fs.readdir(downloads);
-    return files.filter(file => file.endsWith(".wav")).length === 2;
-  }, "authenticated browser downloads");
-  console.log("Real Chrome: automatic pairing, readable preset/help, actual ft export, and both native downloads passed.");
+  await cdp.evaluate(`(() => {
+    const speed = document.getElementById("player-speed");
+    speed.value = "75"; speed.dispatchEvent(new Event("input"));
+  })()`);
+  assert.equal(await cdp.evaluate('document.getElementById("player-audio").playbackRate'), 0.75);
+  assert.equal(await cdp.evaluate('document.getElementById("player-audio").preservesPitch'), true);
+  console.log("Real Chrome: automatic pairing, readable preset/help, actual ft export, and in-page stem playback passed.");
 } catch (error) {
   if (cdp) {
     try {
       console.error("Browser diagnostics:", cdp.diagnostics);
       console.error("Owned test tabs:", (await cdp.send("Target.getTargets")).targetInfos.map(target => target.url));
-      console.error("Downloaded files:", await fs.readdir(path.join(root, "downloads")));
-      const tabs = await (await fetch(debugURL + "/json/list")).json();
-      for (const tab of tabs.filter(tab => tab.url.startsWith(backend + "/app/download/"))) {
-        const failed = new CDP(tab.webSocketDebuggerUrl);
-        console.error("Download response:", await failed.evaluate("document.body.innerText"));
-        failed.close();
-      }
     } catch (diagnosticError) {
       console.error("Could not read all browser diagnostics:", diagnosticError.message);
     }

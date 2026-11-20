@@ -63,6 +63,7 @@ class CompanionLauncherTests(unittest.TestCase):
             self.assertEqual(html_type, "text/html; charset=utf-8")
             self.assertIn(b'<link rel="icon" href="/app/jamly.svg" type="image/svg+xml">', html_bytes)
             self.assertIn("img-src 'self'", companion_ui.CSP)
+            self.assertIn("media-src 'self' blob:", companion_ui.CSP)
             self.assertEqual(icon_type, "image/svg+xml")
             self.assertEqual(
                 icon_bytes.decode("utf-8").replace("\r\n", "\n"),

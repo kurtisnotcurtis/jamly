@@ -14,6 +14,7 @@ import warnings
 from .runtime import browser_assets
 
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; "
+       "media-src 'self' blob:; "
        "form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 LAUNCH_LIFETIME = 120
 SESSION_LIFETIME = 24 * 60 * 60
