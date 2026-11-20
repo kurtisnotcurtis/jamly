@@ -4,7 +4,8 @@
 - Use package imports (`from .core import ...` internally, `from jamly.core import ...` in tests).
 - Install with `uv sync --locked`. Run pytest, unittest and Ruff through `uv run --locked`.
 - Browser code is under `browser/`; its Node tests run with `node --test`.
-- The companion page is under `src/jamly/web`; it is an exporter, not a player.
+- The companion page is under `src/jamly/web`; it exports stems and offers in-page practice playback of
+  finished exports (no browser downloads). It is not a full practice platform.
 - `tools/` builds native desktop archives. Use `uv sync --locked --group bundle` and then
   `uv run --no-sync` for packaging commands so the build dependencies are not pruned mid-build.
 - Exercise relocated bundles with an empty PATH and both models. Keep native sources, notices

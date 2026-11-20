@@ -2,15 +2,19 @@
 
 ## Product boundary
 
-Jamly is a local exporter with a companion interface and an optional browser extension.
+Jamly is a local exporter with a companion interface (including in-page practice playback) and an
+optional browser extension.
 It accepts individual media URLs or local audio files and produces reusable stem pairs (`drums`/`no_drums`
 by default, or `vocals`/`no_vocals` for karaoke, `bass`, `guitar`, `piano`, `other`, or `all` individual stems).
 The companion works without an extension; the extension is a convenience for submitting the current page.
 A static showcase website lives under `site/` for GitHub Pages and is excluded from Python wheels,
 browser extension exports, and desktop companion archives.
 
-A lightweight practice player with synchronized playback, A-B loops, speed adjustment and a count-in
-is a possible later direction, **not implemented or scheduled**. Browser-only inference is descoped.
+The companion's Exports list doubles as a lightweight practice player: stem buttons load a finished
+export into a docked player, switching stems of the same track keeps the playback position, and a
+speed control (50-150%) uses the browser's pitch-preserving playback rate. Transposition, A-B loops,
+synchronized multi-stem playback and a count-in are possible later directions, **not implemented**.
+Browser-only inference is descoped.
 Cloud accounts, a full practice platform, additional engines and marketplace publication are not part
 of this release.
 
@@ -96,7 +100,7 @@ Saved UI preferences are validated and atomically persisted separately from the 
 installation configuration; explicit backend CLI arguments override saved preferences at startup.
 An accepted job retains its original settings even if the defaults change.
 
-A private per-user token or a companion session is required for jobs, status and downloads. The unauthenticated health probe
+A private per-user token or a companion session is required for jobs, status and stem playback. The unauthenticated health probe
 contains no paths or credentials. Origin and Host checks are independent of authentication. Result
 URLs refer to known completed artifacts, never arbitrary client-supplied filesystem paths.
 
@@ -106,10 +110,12 @@ tab-scoped sessionStorage. The launch file is removed after use; stale tickets c
 No credential is put in a URL, command line, log or cookie. Static UI assets expose no secrets.
 Manual pairing remains available for advanced clients.
 
-Native web downloads POST the session token in a hidden form so large files do not need to be held
-in a JavaScript Blob. UI pages use a same-origin referrer policy to retain the Origin header for these
-POSTs, a restrictive CSP, and frame blocking. Only the ticket-exchange endpoint permits a null
-file-origin; other browser origins remain restricted. Desktop actions are limited to loopback servers.
+The companion does not offer browser downloads; finished files are already in the output folder.
+For playback it fetches the selected stem with the session token in an Authorization header and plays
+it from an in-memory `blob:` URL (the CSP allows `media-src 'self' blob:`), so a long float32 WAV is
+held in memory while loaded. UI pages use a same-origin referrer policy, a restrictive CSP, and frame
+blocking. Only the ticket-exchange endpoint permits a null file-origin; other browser origins remain
+restricted. Desktop actions are limited to loopback servers.
 
 The extension renders server text with DOM text APIs, shows failed HTTP requests, and uses the
 browser download manager with an Authorization header. Tokens are not placed in result URLs.

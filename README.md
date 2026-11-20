@@ -35,7 +35,8 @@ Self-contained archives for **macOS** (Apple Silicon & Intel), **Windows x64**, 
 3. Jamly opens your browser to the local companion page automatically:
    - Paste a track URL or local file path—or click **Choose files** to upload audio from your computer.
    - Pick a **Preset** and **Format** (`MP3` or `WAV`), then click **Split drums**.
-   - Click **Open export folder** (or a track's folder icon) to open files on disk, click any stem download button to save a copy in your browser, or use **Clear list** / **Rescan folder** to manage the Exports list.
+   - Click a track's drum / no-drum (or other stem) button to play it in the docked practice player—switching stems keeps your place, and the **Speed** slider slows down or speeds up playback without changing pitch.
+   - Click **Open export folder** (or a track's folder icon) to open files on disk, or use **Clear list** / **Rescan folder** to manage the Exports list.
 
 *(Closing the browser tab does not interrupt running jobs; reopen `Jamly` anytime to reconnect, or click **Quit companion** to stop the background worker. Note: preview builds are unsigned, so macOS Gatekeeper or Windows SmartScreen may prompt on first launch.)*
 
