@@ -113,7 +113,12 @@
           () => send({ type: "download", output }),
         ));
       }
-      if (!["pending", "running"].includes(job.status)) {
+      if (["pending", "running"].includes(job.status)) {
+        row.appendChild(button("Cancel", async () => {
+          await send({ type: "cancel", id: job.watch_id });
+          await refresh();
+        }));
+      } else {
         row.appendChild(button("Retry / check files", async () => {
           await send({ type: "retry", id: job.watch_id, replace: byId("replace").checked });
           await refresh();

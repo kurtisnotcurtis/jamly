@@ -66,6 +66,9 @@
     retry: (config, id, replace = false) => request(
       config, "/retry/" + encodeURIComponent(id), "POST", { replace_existing: replace }
     ),
+    cancel: (config, id) => request(
+      config, "/cancel/" + encodeURIComponent(id), "POST", {}
+    ),
   };
   global.jamlyClient = client;
   if (typeof module !== "undefined" && module.exports) module.exports = client;

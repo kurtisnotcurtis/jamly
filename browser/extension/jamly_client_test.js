@@ -37,11 +37,13 @@ test("paired JSON status, submission and retry preserve input and options", asyn
     model: "htdemucs_ft", audio_format: "wav",
   })).newly_added, 1);
   await client.retry(config, "src-id", false);
+  await client.cancel(config, "src-id");
   assert.deepEqual(received, [
     { url: "/add", body: {
       inputs: ["https://example.test/a"], replace_existing: true, model: "htdemucs_ft", audio_format: "wav",
     } },
     { url: "/retry/src-id", body: { replace_existing: false } },
+    { url: "/cancel/src-id", body: {} },
   ]);
 });
 

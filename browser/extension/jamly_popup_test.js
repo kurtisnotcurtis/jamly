@@ -80,3 +80,27 @@ test("offline and rejected submissions are visible, never queued successes", asy
   assert.equal(elements.error.textContent, "authorization required");
   assert.equal(elements.connection.textContent.includes("queued undefined"), false);
 });
+
+test("popup exposes cancel action for pending and running jobs", async () => {
+  const messages = [];
+  const elements = popup(async message => {
+    messages.push(message);
+    return {
+      ok: true,
+      result: {
+        pending: 1, done: 0, failed: 0,
+        models: [{ id: "htdemucs", label: "Balanced", description: "Faster" }],
+        defaults: { model: "htdemucs" },
+        jobs: [{ watch_id: "active-id", title: "Active track", status: "running", outputs: [] }],
+      },
+    };
+  });
+  await tick();
+  const row = elements.jobs.children[0];
+  const cancelBtn = row.children.find(child => child.textContent === "Cancel");
+  assert.ok(cancelBtn);
+  await cancelBtn.events.click();
+  const cancelled = messages.find(message => message.type === "cancel");
+  assert.ok(cancelled);
+  assert.equal(cancelled.id, "active-id");
+});

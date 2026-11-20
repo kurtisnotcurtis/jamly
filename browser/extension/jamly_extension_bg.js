@@ -24,6 +24,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
       case "retry":
         return jamlyClient.retry(settings, message.id, Boolean(message.replace));
+      case "cancel":
+        return jamlyClient.cancel(settings, message.id);
       case "download": {
         const url = jamlyClient.outputURL(settings, message.output.url);
         const filename = String(message.output.name).replace(/[\\/]/g, "_");

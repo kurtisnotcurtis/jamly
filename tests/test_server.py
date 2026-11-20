@@ -293,6 +293,56 @@ class ServerTests(unittest.TestCase):
         replacement = server.ItemServer(self.app.args)
         replacement.stop()
 
+    def test_cancel_stops_running_and_queued_jobs_and_allows_retry(self):
+        started = threading.Event()
+        second_source = "https://youtu.be/9bZkp7q19f0"
+        second_wid = "9bZkp7q19f0"
+        seen = []
+
+        def process(wid, _args, *, cancel_event, **_kwargs):
+            seen.append(wid)
+            if wid == self.wid and len(seen) == 1:
+                try:
+                    core.run([sys.executable, "-c",
+                              "import time;print('ready',flush=True);time.sleep(60)"],
+                             stream=True, on_line=lambda _line: started.set(), cancel_event=cancel_event)
+                except InterruptedError:
+                    return ItemResult(wid, status="cancelled", error="Processing was cancelled")
+            return ItemResult(wid, status="done")
+
+        self.start(process)
+        self.request("POST", "/add", {"inputs": [self.source, second_source]})
+        self.assertTrue(started.wait(3))
+
+        code, payload, _ = self.request("POST", "/cancel/" + second_wid, {})
+        self.assertEqual(code, 202)
+        self.assertTrue(payload["cancelled"])
+
+        code, payload, _ = self.request("POST", "/cancel/" + self.wid, {})
+        self.assertEqual(code, 202)
+        self.assertTrue(payload["cancelled"])
+
+        state = self.wait_for(
+            lambda s: s["current"] is None and all(j["status"] == "cancelled" for j in s["jobs"])
+        )
+        self.assertEqual(state["pending"], 0)
+        self.assertEqual(state["failed"], 0)
+        self.assertEqual(seen, [self.wid])
+        self.assertIsNone(state["jobs"][0]["error"])
+        self.assertIsNone(state["jobs"][1]["error"])
+
+        code, payload, _ = self.request("POST", "/cancel/" + self.wid, {})
+        self.assertEqual(code, 202)
+        self.assertFalse(payload["cancelled"])
+
+        code, _, _ = self.request("POST", "/cancel/missing-job", {})
+        self.assertEqual(code, 404)
+
+        self.request("POST", "/retry/" + self.wid, {})
+        state = self.wait_for(lambda s: s["done"] == 1)
+        self.assertEqual(seen, [self.wid, self.wid])
+        self.assertEqual(state["pending"], 0)
+
     def test_artifacts_require_auth_and_matching_generation(self):
         def process(wid, args, **_kwargs):
             directory = Path(args.output_dir) / wid / args.audio_format

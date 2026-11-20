@@ -121,6 +121,8 @@ class ItemServer:
             self._serve_ident = None
             self._closed = False
             self._current = None
+            self._current_cancel = None
+            self._cancelled_ids = set()
             self._error = None
             self.ui = CompanionUI(self.state_dir, enabled=_is_loopback_host(args.host))
             server_type = _IPv6Server if ":" in args.host else _HTTPServer
@@ -303,6 +305,24 @@ class ItemServer:
         self._wake.set()
         return added
 
+    def cancel(self, wid: str) -> bool:
+        with self._status_lock:
+            if self._error or self._stop.is_set():
+                raise QueueError(self._error or "Server is shutting down")
+            item = self.queue.get(wid)
+            if item is None:
+                raise KeyError(wid)
+            if item["status"] == "pending":
+                self._commit(lambda queue: queue.finish(wid, "cancelled"))
+                return True
+            if item["status"] == "running" and self._current and self._current["watch_id"] == wid:
+                self._cancelled_ids.add(wid)
+                self._current["cancelling"] = True
+                if self._current_cancel is not None:
+                    self._current_cancel.set()
+                return True
+            return False
+
     def _process_one(self) -> bool:
         with self._status_lock:
             pending = self.queue.pending_items()
@@ -310,28 +330,40 @@ class ItemServer:
                 return False
             item = pending[0]
             wid = item["watch_id"]
+            cancel_event = threading.Event()
+            self._current_cancel = cancel_event
+            self._cancelled_ids.discard(wid)
             self._commit(lambda queue: queue.mark_running(wid))
             running = self.queue.get(wid) or {}
             self._current = {"watch_id": wid, "stage": "metadata", "status": "running",
                              "title": item.get("title"), "error": None, "progress": None,
-                             "started_at": running.get("started_at")}
+                             "started_at": running.get("started_at"), "cancelling": False}
 
         def progress(_wid, stage, index, total):
             with self._status_lock:
-                self._current["stage"] = stage
-                self._current["progress"] = int(index) if total else None
+                if self._current:
+                    self._current["stage"] = stage
+                    self._current["progress"] = int(index) if total else None
 
         try:
             result = process_one(
                 wid, job_arguments(self.args, item.get("options", {})),
-                source_url=item["source_url"], progress=progress, cancel_event=self._stop,
+                source_url=item["source_url"], progress=progress, cancel_event=cancel_event,
             )
         except Exception as exc:
             result = ItemResult(wid, status="error", error=str(exc))
-        status = "pending" if result.status == "cancelled" and self._stop.is_set() else result.status
         with self._status_lock:
+            user_cancelled = wid in self._cancelled_ids
+            self._cancelled_ids.discard(wid)
+            self._current_cancel = None
+            if self._stop.is_set() and result.status == "cancelled" and not user_cancelled:
+                status, error = "pending", None
+            elif user_cancelled and result.status == "cancelled":
+                status, error = "cancelled", None
+            else:
+                status, error = result.status, result.error
             self._commit(lambda queue: queue.finish(
-                wid, status, error=result.error if status != "pending" else None,
+                wid, status, error=error,
                 title=result.title, outputs=result.outputs, generation=result.generation,
             ))
             self._current = None
@@ -436,6 +468,9 @@ class ItemServer:
             if self._closed:
                 return
             self._stop.set()
+            with self._status_lock:
+                if self._current_cancel is not None:
+                    self._current_cancel.set()
             self._wake.set()
             serving = self._serving and self._serve_ident != threading.get_ident()
         if serving:
@@ -740,6 +775,12 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
                     raise ValueError("retry accepts only a boolean replace_existing field")
                 added = int(self.app.retry(unquote(path.removeprefix("/retry/")),
                                            payload.get("replace_existing", False)))
+            elif path.startswith("/cancel/"):
+                if payload:
+                    raise ValueError("cancel takes no options")
+                cancelled = self.app.cancel(unquote(path.removeprefix("/cancel/")))
+                self._json({"cancelled": cancelled, "pending_count": self.app.snapshot()["pending"]}, 202)
+                return
             else:
                 self._json({"error": "not found"}, 404)
                 return
