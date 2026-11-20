@@ -18,7 +18,11 @@ import zipfile
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
-from native_audio import ROOT, SOURCES, SOURCES_FILE, build, checksum, download_source
+TOOLS_DIR = Path(__file__).resolve().parent
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+
+from native_audio import ROOT, SOURCES, SOURCES_FILE, build, checksum, download_source  # noqa: E402
 
 
 def python_notices(destination: Path) -> None:
@@ -152,9 +156,33 @@ def notices(staging: Path) -> list[dict]:
     return inventory
 
 
+def build_native_sources_archive(archives: Path, version: str, downloads: Path) -> Path:
+    """Package the pinned native dependency tarballs and build scripts once per release."""
+    source_archive = archives / ("Jamly-%s-native-sources.zip" % version)
+    with zipfile.ZipFile(source_archive, "w", compression=zipfile.ZIP_STORED) as archive:
+        for name in SOURCES:
+            source = download_source(name, downloads)
+            archive.write(source, source.name)
+        archive.write(SOURCES_FILE, "native-sources.json")
+        archive.write(Path(__file__).with_name("native_audio.py"), "native_audio.py")
+        archive.writestr("README.txt",
+                        "Exact sources for the bundled FFmpeg, LAME, OpenSSL and libsndfile.\n"
+                        "native_audio.py builds all four native dependencies from these sources. "
+                        "The source-built libsndfile replaces the wheel's library and is used only "
+                        "for PCM audio; encoded media uses sphn/FFmpeg. Jamly uses libsndfile dynamically, "
+                        "so the bundled library "
+                        "can be replaced with a compatible modified library.\n"
+                        "To rebuild the audio executables with Python 3.12 and a C toolchain:\n"
+                        "python native_audio.py --work-dir ./build/native-audio\n"
+                        "The companion is an aggregation: bundled components retain their own licenses.\n")
+    return source_archive
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--jobs", type=int, default=4, help="Native compilation parallelism")
+    parser.add_argument("--skip-native-sources", action="store_true",
+                        help="Skip creating the shared Jamly-<version>-native-sources.zip archive")
     args = parser.parse_args()
     import soundfile
     from deno import find_deno_bin
@@ -199,30 +227,17 @@ def main() -> int:
     else:
         kind = "zip" if os.name == "nt" else "gztar"
         artifact = Path(shutil.make_archive(str(archives / release), kind, output, "Jamly"))
-    source_archive = archives / (release + "-native-sources.zip")
-    with zipfile.ZipFile(source_archive, "w", compression=zipfile.ZIP_STORED) as archive:
-        for name in SOURCES:
-            source = download_source(name, ROOT / "build" / "native-audio" / "downloads")
-            archive.write(source, source.name)
-        archive.write(SOURCES_FILE, "native-sources.json")
-        archive.write(Path(__file__).with_name("native_audio.py"), "native_audio.py")
-        archive.writestr("README.txt",
-                        "Exact sources for the bundled FFmpeg, LAME, OpenSSL and libsndfile.\n"
-                        "native_audio.py builds all four native dependencies from these sources. "
-                        "The source-built libsndfile replaces the wheel's library and is used only "
-                        "for PCM audio; encoded media uses sphn/FFmpeg. Jamly uses libsndfile dynamically, "
-                        "so the bundled library "
-                        "can be replaced with a compatible modified library.\n"
-                        "To rebuild the audio executables with Python 3.12 and a C toolchain:\n"
-                        "python native_audio.py --work-dir ./build/native-audio\n"
-                        "The companion is an aggregation: bundled components retain their own licenses.\n")
+    packaged = [artifact]
+    if not args.skip_native_sources:
+        packaged.append(build_native_sources_archive(
+            archives, __version__, ROOT / "build" / "native-audio" / "downloads"
+        ))
     checksum_file = archives / (release + ".sha256")
     checksum_file.write_text("".join(
-        "%s  %s\n" % (checksum(path), path.name) for path in (artifact, source_archive)
+        "%s  %s\n" % (checksum(path), path.name) for path in packaged
     ))
-    print(artifact)
-    print(source_archive)
-    print(checksum_file)
+    for path in (*packaged, checksum_file):
+        print(path)
     return 0
 
 

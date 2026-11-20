@@ -50,6 +50,7 @@ def _load_tool(filename: str):
 
 
 native_audio = _load_native_audio()
+build_companion = _load_tool("build_companion.py")
 version_tool = _load_version_tool()
 winget_tool = _load_winget_tool()
 aur_tool = _load_tool("render_aur.py")
@@ -389,6 +390,47 @@ class BundleIconTests(unittest.TestCase):
         magic, length = struct.unpack_from(">4sI", icns_bytes, 0)
         self.assertEqual(magic, b"icns")
         self.assertEqual(length, len(icns_bytes))
+
+
+class NativeSourcesArchiveTests(unittest.TestCase):
+    def test_build_native_sources_archive_writes_single_platform_independent_zip(self):
+        import sys
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            archives = base / "companions"
+            downloads = base / "downloads"
+            archives.mkdir()
+            downloads.mkdir()
+
+            fake_sources = {}
+            expected_tarballs = []
+            for idx, name in enumerate(native_audio.SOURCES):
+                tarball_name = f"{name}-{idx}.tar.gz"
+                payload = f"payload-{name}".encode("utf-8")
+                (downloads / tarball_name).write_bytes(payload)
+                fake_sources[name] = {
+                    "url": f"https://example.com/{tarball_name}",
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                }
+                expected_tarballs.append(tarball_name)
+
+            download_mod = sys.modules[build_companion.download_source.__module__]
+            with unittest.mock.patch.object(build_companion, "SOURCES", fake_sources), \
+                    unittest.mock.patch.object(download_mod, "SOURCES", fake_sources):
+                result = build_companion.build_native_sources_archive(archives, "0.1.4", downloads)
+
+            self.assertEqual(result, archives / "Jamly-0.1.4-native-sources.zip")
+            self.assertTrue(result.is_file())
+            with zipfile.ZipFile(result) as zf:
+                names = set(zf.namelist())
+                self.assertEqual(
+                    names,
+                    set(expected_tarballs) | {"native-sources.json", "native_audio.py", "README.txt"},
+                )
+                for info in zf.infolist():
+                    self.assertEqual(info.compress_type, zipfile.ZIP_STORED)
 
 
 if __name__ == "__main__":

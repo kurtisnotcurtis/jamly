@@ -88,11 +88,16 @@ jobs:
           key: native-audio-${{ matrix.label }}-${{ hashFiles('tools/native_audio.py', 'tools/native-sources.json') }}
       - name: Build companion on macOS or Linux
         if: runner.os != 'Windows'
-        run: uv run --no-sync python tools/build_companion.py
+        run: |
+          if [[ "${{ matrix.label }}" == "linux-x86_64" ]]; then
+            uv run --no-sync python tools/build_companion.py
+          else
+            uv run --no-sync python tools/build_companion.py --skip-native-sources
+          fi
       - name: Build companion on Windows
         if: runner.os == 'Windows'
         shell: msys2 {0}
-        run: uv run --no-sync python tools/build_companion.py
+        run: uv run --no-sync python tools/build_companion.py --skip-native-sources
       - name: Relocate and exercise the packaged runtime
         run: uv run --no-sync python tools/bundle_smoke.py --real-models
       - name: Real Chrome using the packaged companion

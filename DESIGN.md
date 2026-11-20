@@ -168,7 +168,7 @@ and loopback control protocol (`api_version`) are versioned independently from t
 To cut a release, run `uv run --locked python tools/version.py --set X.Y.Z`, run the test and lint
 suites, commit on `main`, and push an annotated `vX.Y.Z` tag. Tag pushes trigger `companions.yml`,
 which verifies the tag against `tools/version.py`, builds and smoke-tests the four desktop companion
-archives alongside their corresponding native source archives, renders release manifests for WinGet,
+archives alongside a single shared native source archive, renders release manifests for WinGet,
 AUR (`jamly-bin`), and the Homebrew Tap, packages the browser extension and userscript, writes
 `SHA256SUMS.txt`, and publishes the GitHub Release; configured repository secrets then push or submit
 updated manifests to the Homebrew Tap, AUR (`jamly-bin`), and `microsoft/winget-pkgs`, while `pypi.yml`
