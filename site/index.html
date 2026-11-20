@@ -58,36 +58,128 @@
           </ul>
         </div>
 
-        <div class="hero-card" aria-label="Companion preview">
-          <div class="window-bar">
-            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-            <span class="window-title">Jamly Companion - 127.0.0.1:8765</span>
+        <div class="hero-card" aria-label="Jamly browser companion preview">
+          <div class="browser-tabs" aria-hidden="true">
+            <div class="window-controls">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            </div>
+            <div class="browser-tab">
+              <img class="browser-tab-icon" src="jamly-mark.svg" alt="" width="14" height="14">
+              <span class="browser-tab-title">Jamly</span>
+              <span class="browser-tab-close">&times;</span>
+            </div>
+            <span class="browser-new-tab">+</span>
+          </div>
+          <div class="browser-toolbar">
+            <div class="browser-nav" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+            </div>
+            <div class="browser-address">
+              <svg class="browser-address-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8"/><path d="M3.6 15h16.8"/><path d="M12 3a14 14 0 0 1 0 18"/><path d="M12 3a14 14 0 0 0 0 18"/></svg>
+              <span class="browser-url"><span class="browser-url-scheme">http://</span>127.0.0.1:8765/app/</span>
+            </div>
           </div>
           <div class="window-body">
-            <div class="mock-field">
-              <span class="mock-label">Input URLs, video IDs, or local audio files</span>
-              <code>https://youtu.be/dQw4w9WgXcQ<br>~/Music/Session_Take_04.wav</code>
+            <div class="mock-app-header">
+              <div class="mock-brand-row">
+                <img class="mock-brand-logo" src="jamly-mark.svg" alt="" width="28" height="28">
+                <div class="mock-brand-copy">
+                  <strong class="mock-app-title">Jamly</strong>
+                  <span class="mock-app-subtitle">Practice tracks, karaoke, and stems. Separated on your computer.</span>
+                </div>
+              </div>
+              <span class="mock-btn mock-quit">Quit companion</span>
             </div>
-            <div class="mock-row">
-              <div class="mock-pill">
-                <span class="mock-label">Preset</span>
-                <strong>6-stem (HTDemucs)</strong>
+            <p class="mock-connection">Connected to your local companion. Jobs continue when this page closes.</p>
+            <div class="mock-form">
+              <span class="mock-label">Individual media URLs, YouTube ids, or local audio file paths (one per line)</span>
+              <div class="mock-textarea">
+                <code>https://youtu.be/dQw4w9WgXcQ<br>~/Music/Session_Take_04.wav</code>
               </div>
-              <div class="mock-pill">
-                <span class="mock-label">Format</span>
-                <strong>WAV (float32)</strong>
+              <div class="mock-settings">
+                <div class="mock-select-group">
+                  <span class="mock-label">Separation preset</span>
+                  <span class="mock-select">
+                    <span>Balanced</span>
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                  </span>
+                </div>
+                <div class="mock-select-group">
+                  <span class="mock-label">Target stems</span>
+                  <span class="mock-select">
+                    <span>Drums (drums + drumless)</span>
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                  </span>
+                </div>
+                <div class="mock-select-group">
+                  <span class="mock-label">Export format</span>
+                  <span class="mock-select">
+                    <span>WAV - lossless float audio</span>
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                  </span>
+                </div>
+              </div>
+              <div class="mock-form-actions">
+                <span class="mock-btn mock-btn-primary">Split drums</span>
+                <span class="mock-btn">Save defaults</span>
               </div>
             </div>
-            <div class="mock-job">
-              <div class="mock-job-header">
-                <strong>Artist - Song [dQw4w9WgXcQ]</strong>
-                <span class="status-badge done">Complete</span>
+            <div class="mock-exports">
+              <div class="mock-exports-header">
+                <div>
+                  <strong class="mock-exports-title">Exports</strong>
+                  <span class="mock-counts">Queued: 0 | Complete: 1 | Failed: 0</span>
+                </div>
+                <div class="mock-exports-actions">
+                  <span class="mock-toolbar-btn">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                    <span>Open export folder</span>
+                  </span>
+                  <span class="mock-toolbar-btn">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15.36-6.36L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.36 6.36L3 16"/><path d="M3 21v-5h5"/></svg>
+                    <span>Rescan folder</span>
+                  </span>
+                  <span class="mock-toolbar-btn">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+                    <span>Clear list</span>
+                  </span>
+                </div>
               </div>
-              <p class="mock-meta">Shared gain: -1.4 dB · Peak: -1.0 dBFS · SHA-256 verified</p>
-              <div class="mock-buttons">
-                <span class="chip">Show files</span>
-                <span class="chip accent">Save a copy: drumless</span>
-                <span class="chip accent">Save a copy: drums</span>
+              <div class="mock-job">
+                <div class="mock-job-info">
+                  <div class="mock-job-title-row">
+                    <strong class="mock-job-title">Artist - Song [dQw4w9WgXcQ]</strong>
+                    <span class="status-badge done">Complete</span>
+                  </div>
+                  <p class="mock-job-detail">Complete | 6-stem (HTDemucs) | WAV</p>
+                  <p class="mock-job-times">Requested Nov 19, 9:18 PM · Finished Nov 19, 9:19 PM · Took 42s</p>
+                </div>
+                <div class="mock-job-actions">
+                  <span class="mock-download-btn">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11"/><path d="M8 10l4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+                    <span>drumless</span>
+                  </span>
+                  <span class="mock-download-btn">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11"/><path d="M8 10l4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+                    <span>drums</span>
+                  </span>
+                  <div class="mock-job-controls">
+                    <span class="mock-icon-btn" title="Open original URL">
+                      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6"/><path d="M10 14L20 4"/><path d="M20 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5"/></svg>
+                    </span>
+                    <span class="mock-icon-btn" title="Show files in folder">
+                      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                    </span>
+                    <span class="mock-icon-btn" title="Retry / check files">
+                      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+                    </span>
+                    <span class="mock-icon-btn danger" title="Remove from list">
+                      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
