@@ -195,9 +195,20 @@ try {
   await cdp.send("Page.enable");
   await cdp.send("Runtime.enable");
   await cdp.send("Log.enable");
-  await waitFor(async () => cdp.evaluate(
-    'location.pathname === "/app/" && document.getElementById("workspace")?.hidden === false'
-  ), "automatic companion pairing");
+  // The launch page auto-submits a session POST then location.replace("/app/").
+  // Those full-page navigations briefly drop the CDP execution context, so an
+  // evaluate() mid-flight returns "Inspected target navigated or closed". Treat
+  // that transient error as "not ready yet" and let waitFor keep polling.
+  await waitFor(async () => {
+    try {
+      if ((await cdp.evaluate("location.pathname")) !== "/app/") return false;
+      return Boolean(await cdp.evaluate(
+        'document.getElementById("workspace")?.hidden === false'));
+    } catch (error) {
+      if (!/navigated|closed/i.test(error.message)) throw error;
+      return false;
+    }
+  }, "automatic companion pairing");
   assert.equal(await cdp.evaluate("location.search + location.hash"), "");
   await cdp.evaluate(`(() => {
     const model = document.getElementById("model");
