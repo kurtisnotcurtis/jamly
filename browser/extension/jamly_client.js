@@ -63,8 +63,20 @@
     return url.href;
   }
 
+  function sourceURL(config, watchId) {
+    const base = baseURL(config.url);
+    if (typeof watchId !== "string" || !watchId) {
+      throw new Error("The backend returned an invalid source id.");
+    }
+    const url = new URL(base + "/source/" + encodeURIComponent(watchId));
+    if (url.origin !== new URL(base).origin) {
+      throw new Error("The backend returned an invalid source URL.");
+    }
+    return url.href;
+  }
+
   const client = {
-    baseURL, outputURL, status, request,
+    baseURL, outputURL, sourceURL, status, request,
     health: config => request(config, "/healthz"),
     addInputs: (config, inputs, replace = false, options = {}) => request(config, "/add", "POST", {
       inputs, replace_existing: replace, model: options.model, audio_format: options.audio_format,

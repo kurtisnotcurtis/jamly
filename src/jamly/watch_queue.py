@@ -140,9 +140,9 @@ class WatchQueue:
             retry=retry, options=options,
         ) for index, wid in enumerate(watch_ids))
 
-    def get(self, watch_id: str) -> dict | None:
+    def get(self, watch_id: str, default=None) -> dict | None:
         item = self._by_id.get(watch_id)
-        return copy.deepcopy(item) if item is not None else None
+        return copy.deepcopy(item) if item is not None else default
 
     def copy(self) -> "WatchQueue":
         result = WatchQueue(self.path, items=self.items)
@@ -263,7 +263,7 @@ class WatchQueue:
                 item["requested_at"] = now
 
     def finish(self, watch_id: str, status: str, *, error=None, outputs=None,
-               title=None, generation=None) -> None:
+               title=None, generation=None, source_url=None) -> None:
         if status not in self.STATUSES:
             raise ValueError("unknown job status")
         item = self._by_id.get(watch_id)
@@ -283,6 +283,8 @@ class WatchQueue:
             item["outputs"] = dict(outputs)
         if title:
             item["title"] = title
+        if source_url:
+            item["source_url"] = source_url
         if generation is not None:
             item["generation"] = generation
         if status in ("done", "skipped") and item.get("outputs") and item.get("generation"):

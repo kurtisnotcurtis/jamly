@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
 import tempfile
 import uuid
@@ -25,8 +26,8 @@ from .models import DEFAULT_MODEL, DEFAULT_STEM, expected_output_kinds, validate
 from .naming import meta_dict, parse_title_artist, stem_prefix
 from .normalize import Input, local_audio_path, normalize_inputs_full
 from .outputs import (
-    PROCESSING_VERSION, checksum, publish_directory, read_manifest, recover_directory,
-    resolve_output_path,
+    PROCESSING_VERSION, audio_directory, checksum, publish_directory, read_manifest,
+    recover_directory, resolve_output_path,
 )
 from .watch_queue import QueueError, WatchQueue, queue_owner
 
@@ -45,6 +46,7 @@ class ItemResult:
     meta_path: str | None = None
     error: str | None = None
     generation: str | None = None
+    source_path: str | None = None
     stem_paths: dict[str, str] | None = None
 
     @property
@@ -289,8 +291,20 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
                 )
                 audio_info = render_pair(stems, workdir, destinations, args.audio_format,
                                          ffmpeg, cancel_event, target_stem=stem)
+                # Keep the original on disk next to the published stems so it can be replayed as
+                # "Original" even when the input was a URL (yt-dlp output would otherwise live only in
+                # the temp directory). Local-file inputs already keep their own source path.
+                retained_source_url = source
+                orig_target = None
+                if local_source is None:
+                    orig_ext = audio.suffix.lower() or "." + args.audio_format
+                    orig_target = (
+                        Path(audio_directory(directory))
+                        / ("%s_original%s" % (_stem_file_prefix(wid, parsed, model=model), orig_ext))
+                    )
+                    retained_source_url = str(orig_target)
                 manifest = dict(
-                    meta_dict(watch_id=wid, source_url=source, title=metadata.get("title"),
+                    meta_dict(watch_id=wid, source_url=retained_source_url, title=metadata.get("title"),
                               artist=metadata.get("artist") or (parsed[0] if parsed else None),
                               uploader=metadata.get("uploader"), duration=metadata.get("duration_seconds")),
                     processing_version=PROCESSING_VERSION, generation=uuid.uuid4().hex,
@@ -304,7 +318,16 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
                     os.fsync(file.fileno())
                 stage("publish")
                 publish_directory(staged_dir, directory)
-                return result_from_manifest(wid, directory, manifest, "done")
+                retained = None
+                if orig_target is not None and Path(orig_target).exists():
+                    shutil.copy2(audio, orig_target)
+                    with Path(orig_target).open("rb+") as file:
+                        os.fsync(file.fileno())
+                    retained = str(orig_target)
+                result = result_from_manifest(wid, directory, manifest, "done")
+                if retained is not None:
+                    result.source_path = retained
+                return result
     except InterruptedError as exc:
         result.status, result.error = "cancelled", str(exc)
     except Exception as exc:

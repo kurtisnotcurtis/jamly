@@ -15,8 +15,11 @@ import socket
 import subprocess
 import sys
 import tempfile
+import mimetypes
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import urllib.error
+import urllib.request
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from filelock import FileLock, Timeout
@@ -369,6 +372,7 @@ class ItemServer:
             self._commit(lambda queue: queue.finish(
                 wid, status, error=error,
                 title=result.title, outputs=result.outputs, generation=result.generation,
+                source_url=getattr(result, "source_path", None),
             ))
             self._current = None
         return True
@@ -725,6 +729,8 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
                 self._json(self.app.snapshot(query))
             except ValueError as exc:
                 self._json({"error": str(exc)}, 400)
+        elif url.path.startswith("/source/"):
+            self._source(url)
         elif url.path.startswith("/outputs/"):
             self._output(url)
         else:
@@ -782,6 +788,76 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
                 self.close_connection = True
                 raise
             self._json({"error": "output is unavailable: %s" % exc}, 404)
+
+    def _source(self, url):
+        parts = url.path.split("/")
+        if len(parts) != 3 or not parts[2]:
+            self._json({"error": "unknown source"}, 404)
+            return
+        watch_id = unquote(parts[2])
+        with self.app._status_lock:
+            item = self.app.queue.get(watch_id)
+        if not item:
+            self._json({"error": "source is unavailable for this job"}, 404)
+            return
+        source_url = (item.get("source_url") or "").strip()
+        if not source_url:
+            self._json({"error": "no source audio available"}, 404)
+            return
+        started = False
+        try:
+            scheme = urlsplit(source_url).scheme.lower()
+            if scheme in ("http", "https"):
+                request = urllib.request.Request(source_url, headers={
+                    "User-Agent": "Jamly/1.0",
+                    "Accept": "audio/*,*/*",
+                })
+                with urllib.request.urlopen(request, timeout=25) as remote:
+                    content_type = remote.headers.get("Content-Type") or "audio/mpeg"
+                    length_raw = remote.headers.get("Content-Length")
+                    try:
+                        length = int(length_raw) if length_raw else -1
+                    except ValueError:
+                        length = -1
+                    self.send_response(200)
+                    self._cors()
+                    self.send_header("Content-Type", content_type)
+                    if length and length > 0:
+                        self.send_header("Content-Length", str(length))
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Referrer-Policy", "same-origin")
+                    if self.close_connection:
+                        self.send_header("Connection", "close")
+                    self.end_headers()
+                    started = True
+                    shutil.copyfileobj(remote, self.wfile)
+            else:
+                path = Path(source_url)
+                if not path.is_file():
+                    self._json({"error": "source file is unavailable"}, 404)
+                    return
+                content_type = mimetypes.guess_type(path.name)[0] or "audio/mpeg"
+                size = path.stat().st_size
+                with path.open("rb") as file:
+                    self.send_response(200)
+                    self._cors()
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(size))
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Referrer-Policy", "same-origin")
+                    if self.close_connection:
+                        self.send_header("Connection", "close")
+                    self.end_headers()
+                    started = True
+                    shutil.copyfileobj(file, self.wfile)
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
+                OSError, ValueError) as exc:
+            if started:
+                self.close_connection = True
+                raise
+            self._json({"error": "source is unavailable: %s" % exc}, 404)
 
     def do_POST(self):
         parsed_url = urlsplit(self.path)

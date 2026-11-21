@@ -65,3 +65,11 @@ test("artifact downloads stay on the paired backend", () => {
   assert.throws(() => client.outputURL(config, "/outputs/../../private"), /invalid/);
   assert.throws(() => client.baseURL("http://127.0.0.1/?token=secret"), /base URL/);
 });
+
+test("source URLs stay on the paired backend", () => {
+  const config = { url: "https://example.test/jamly" };
+  assert.equal(client.sourceURL(config, "abc-123"),
+               "https://example.test/jamly/source/abc-123");
+  assert.throws(() => client.sourceURL(config, ""), /invalid source id/);
+  assert.throws(() => client.sourceURL(config, undefined), /invalid source id/);
+});
