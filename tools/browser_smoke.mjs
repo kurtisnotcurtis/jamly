@@ -232,8 +232,10 @@ try {
     })()`);
   }, "real Higher quality export", 600000);
   for (const kind of ["drums", "drumless"]) {
-    await cdp.evaluate(`Array.from(document.querySelectorAll("#jobs .stem-btn"))
-      .find(button => button.getAttribute("aria-label") === ${JSON.stringify("Play " + kind)}).click()`);
+    // A plain split job plays its outputs through the embedded player toggles
+    // (#jobs .player-toggle, aria-label = "drums"/"drumless"), not export stem-btns.
+    await cdp.evaluate(`Array.from(document.querySelectorAll("#jobs .player-toggle"))
+      .find(button => button.getAttribute("aria-label") === ${JSON.stringify(kind)}).click()`);
     await waitFor(async () => {
       const error = await cdp.evaluate('document.getElementById("error")?.textContent');
       if (error) throw new Error(error);
