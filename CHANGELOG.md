@@ -2,10 +2,6 @@
 
 All notable changes to Jamly are documented here. This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release tags use `vX.Y.Z` and must match the package version reported by `python tools/version.py --check`.
 
-## [Unreleased]
-
-_Nothing yet._
-
 ## [0.2.0] - 2026-11-21
 
 ### Added
