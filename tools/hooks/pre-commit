@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Pre-commit gate (fast): mirrors CI's quick stages so a commit already passes lint,
+# tests, and lockstep-version checks before it is recorded. Installs into the repo via:
+#   git config core.hooksPath tools/hooks
+# Override per-invocation with extra flags, e.g. `pre-push` runs dev-check --integration.
+set -euo pipefail
+
+repo="$(git rev-parse --show-toplevel)"
+PY="$(command -v python || command -v py || echo python)"
+
+# Keep the commit fast: no wheel rebuild, no real-model audio pipeline.
+# (git passes <remote-name> <remote-url> as argv; dev-check's flags are fixed per hook.)
+exec "$PY" "$repo/tools/dev-check.py" --no-build

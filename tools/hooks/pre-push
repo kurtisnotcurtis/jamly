@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Pre-push gate (thorough): runs the full local suite including the real-model audio
+# pipeline so a push is already validated against CI's stages. The headless-Chrome
+# companion smoke (~15 min, needs Chrome) is omitted by default — run it manually for
+# a release-grade check:  python tools/dev-check.py --browser
+# Installs into the repo via:  git config core.hooksPath tools/hooks
+set -euo pipefail
+
+repo="$(git rev-parse --show-toplevel)"
+PY="$(command -v python || command -v py || echo python)"
+
+# (git passes <remote-name> <remote-url> as argv; dev-check's flags are fixed per hook.)
+exec "$PY" "$repo/tools/dev-check.py" --integration

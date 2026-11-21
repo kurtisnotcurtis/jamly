@@ -248,20 +248,37 @@ Requires Python 3.11–3.12, [uv](https://docs.astral.sh/uv/), `ffmpeg`/`ffprobe
 
 ```sh
 uv sync --locked
-uv run --locked python tools/version.py --check
-uv run --locked pytest
-uv run --locked python -m unittest discover -s tests
-uv run --locked ruff check .
-node --test browser/extension/jamly_client_test.js browser/extension/jamly_extension_bg_test.js browser/extension/jamly_popup_test.js
-uv build
+python tools/dev-check.py            # run the whole CI suite locally before pushing
 ```
 
-To run the end-to-end integration and headless Chrome smoke checks with real Demucs separation on synthesized audio:
+`tools/dev-check.py` reproduces `.github/workflows/ci.yml` step-for-step (lockstep version check, `jamly-doctor`, pytest, unittest, ruff, Node extension tests, and a fresh-install wheel smoke) and fails fast on the first broken stage. Opt into the heavier real-model checks:
 
 ```sh
-uv run --locked python -m unittest discover -s tests -p integration_pipeline.py
-node tools/browser_smoke.mjs
+python tools/dev-check.py --integration    # real Demucs pipeline on synthesized WAV
+python tools/dev-check.py --browser         # headless-Chrome companion workflow (~15 min)
 ```
+
+**Pre-commit / pre-push hooks.** `tools/hooks/` ships a fast pre-commit gate (no wheel rebuild) and a thorough pre-push gate (adds the audio pipeline); install them once per repo:
+
+```sh
+git config core.hooksPath tools/hooks
+```
+
+### Releasing Jamly
+
+Version metadata is kept in lockstep across Python, the browser extension, the userscript, and the desktop bundle by `tools/version.py` (`--check`, `--set X.Y.Z`). A release is cut atomically with `tools/release.py`, which bumps every file to a new version **and** moves the top `## [Unreleased]` changelog section into a dated entry while opening a fresh empty one on top:
+
+```sh
+python tools/release.py bump minor    # start dev on the next version + open [Unreleased]
+# ... changes accumulate under ## [Unreleased] ...
+python tools/release.py new 0.3.0     # cut the release: set versions + date the changelog
+git commit -m "Release 0.3.0"
+git tag -a v0.3.0 -m "Release 0.3.0"
+git push origin main --tags
+python tools/version.py --check --tag v0.3.0
+```
+
+Tag `vX.Y.Z` must match the package version; PyPI publishing triggers on `v*` tags. See [DESIGN.md](DESIGN.md) for release versioning details and [AGENTS.md](AGENTS.md) for contributor guidelines.
 
 ### Building native desktop archives
 

@@ -24,3 +24,10 @@
   `python tools/version.py --set X.Y.Z` and verify with `python tools/version.py --check`.
   Release tags use `vX.Y.Z` and must match the package version. Keep `PROCESSING_VERSION` and
   `api_version` separate from release versions.
+- Verify locally before pushing with `python tools/dev-check.py` (a stdlib-only mirror of
+  `.github/workflows/ci.yml`). The pre-commit hook runs it wheel-free; the pre-push hook adds the
+  real-model audio pipeline. Install both once with `git config core.hooksPath tools/hooks`.
+- Cut a release with `python tools/release.py new X.Y.Z`, which bumps every lockstep file and dates
+  the top `## [Unreleased]` changelog section (opening a fresh empty one). Start dev on the next
+  version first with `python tools/release.py bump minor|patch|major`; accumulate changes under
+  `## [Unreleased]`, then cut. Commit, tag `vX.Y.Z` (annotated), and push tags.
