@@ -161,6 +161,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: var(--accent-ink);
 }
 .stem-btn.playing { box-shadow: 0 0 0 3px rgba(240, 138, 158, 0.25); }
+.stem-btn.src-play {
+  background: rgba(240, 231, 160, 0.16);
+  border-color: rgba(240, 231, 160, 0.5);
+  color: #f7e9a8;
+}
+.stem-btn.src-play:hover:not(:disabled) { background: rgba(240, 231, 160, 0.28); }
 .icon-btn { padding: 7px; min-width: 34px; min-height: 34px; background: var(--bg-alt); }
 .toolbar-btn:hover:not(:disabled), .icon-btn:hover:not(:disabled) {
   background: var(--surface-hover);
@@ -245,12 +251,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .job-times { color: var(--muted); font-size: 12px; opacity: 0.88; }
 .job-actions {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: flex-end;
   gap: 10px;
   flex-shrink: 0;
   max-width: 62%;
 }
+.job-actions > .player-toggles { margin-inline-end: 16px; }
 .stem-group { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .stem-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, auto); gap: 6px; }
 .stem-caption { max-width: 140px; font-size: 10px; color: var(--muted); text-align: center; line-height: 1.25; }
@@ -278,6 +285,47 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .player-speed output { min-width: 38px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .player-speed .toolbar-btn { padding: 5px 9px; font-size: 12px; }
 #player-close { font-size: 18px; line-height: 1; }
+.player-toggles {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+.player-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  line-height: 1;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: inherit;
+  cursor: pointer;
+}
+.player-toggle:hover:not(.active) { border-color: var(--accent); background: var(--surface-hover); }
+.player-toggle.active {
+  background: linear-gradient(180deg, #f6a0b1 0%, var(--accent) 100%);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.player-toggle.playing { box-shadow: 0 0 0 3px rgba(240, 138, 158, 0.3); }
+body.has-player #player {
+  position: sticky;
+  bottom: 0;
+  z-index: 40;
+  border-top: 1px solid var(--border);
+  background: var(--bg-alt);
+  box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.28);
+}
+body.has-player #player .player-inner {
+  position: relative;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+body.has-player .player-speed { order: 2; }
+body.has-player .player-close { order: 3; }
 body.has-player main { padding-bottom: 120px; }
 details { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 18px; }
 summary { cursor: pointer; font-weight: 600; }
@@ -300,6 +348,8 @@ code {
   .exports-filters { grid-template-columns: 1fr 1fr; }
   .exports-filters input { grid-column: 1 / -1; }
   .player-inner { flex-wrap: wrap; gap: 10px; }
+  .player-toggles { flex-basis: 100%; justify-content: center; }
   #player-audio { order: 3; flex-basis: 100%; }
-  body.has-player main { padding-bottom: 170px; }
+  body.has-player .player-speed { order: 4; justify-content: center; }
+  body.has-player main { padding-bottom: 220px; }
 }

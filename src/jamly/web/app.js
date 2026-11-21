@@ -173,6 +173,11 @@
       "M15 16a3 3 0 1 0 6 0a3 3 0 1 0 -6 0",
       "M2.5 21.5l19-19",
     ],
+    wave: [
+      "M2 12s1.5-3 4.5-3 4 3 4 3 1-3 4.5-3 4.5 3 4.5 3",
+      "M2 6s1.5-3 4.5-3 4 3 4 3 1-3 4.5-3 4.5 3 4.5 3",
+      "M2 18s1.5-3 4.5-3 4 3 4 3 1-3 4.5-3 4.5 3 4.5 3",
+    ],
     folder: [
       "M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
     ],
@@ -351,6 +356,12 @@
     return element;
   }
 
+  function stemIconKey(kind) {
+    const negative = typeof kind === "string" && kind.startsWith("no_");
+    const base = negative ? kind.slice(3) : kind;
+    return (base === "drums" ? "drum" : "note") + (negative ? "-off" : "");
+  }
+
   function stemGroup(job, outputs, labelFor, caption) {
     const group = document.createElement("div");
     group.className = "stem-group";
@@ -369,6 +380,57 @@
       group.appendChild(text);
     }
     return group;
+  }
+
+  function localSource(job) {
+    const source = job.source_url;
+    if (!source || source === job.watch_id) return null;
+    try {
+      const parsed = new URL(source);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") return null;
+    } catch (_error) {
+      // Local filesystem paths are not valid URLs; treat as local.
+    }
+    return true;
+  }
+
+  function buildPlayable(job) {
+    const entries = [];
+    if (localSource(job)) {
+      entries.push({ key: "/source/" + job.watch_id, label: "Original", kind: "source", name: "" });
+    }
+    const outputs = (job.outputs || []).filter(o => o.kind !== "metadata");
+    const positives = outputs.filter(o => !o.kind.startsWith("no_"));
+    const negatives = outputs.filter(o => o.kind.startsWith("no_"));
+    for (const output of positives.concat(negatives)) {
+      entries.push({ key: output.url, label: outputLabel(output.kind), kind: "output", name: output.name, stemKind: output.kind });
+    }
+    return entries;
+  }
+
+    function guessContentType(url) {
+    const match = /\.(\w+)$/i.exec(typeof url === "string" ? url : "");
+    switch ((match && match[1].toLowerCase()) || "") {
+      case "wav": return "audio/wav";
+      case "mp3": return "audio/mpeg";
+      case "flac": return "audio/flac";
+      case "m4a": return "audio/mp4";
+      case "ogg": return "audio/ogg";
+      case "opus": return "audio/opus";
+      case "aac": return "audio/aac";
+      case "aiff":
+      case "aif": return "audio/aiff";
+      default: return "audio/mpeg";
+    }
+  }
+
+  function audioFetchUrl(key) {
+    if (typeof key === "string" && /^\/(source|outputs)\//.test(key)) {
+      const segment = decodeURIComponent(key.split("/")[2]);
+      if (key.startsWith("/source/")) return jamlyClient.sourceURL(config, segment);
+      return jamlyClient.outputURL(config, key);
+    }
+    return key;
   }
 
   function sourceControl(job) {
@@ -413,75 +475,121 @@
     byId("player-speed-value").textContent = Math.round(rate * 100) + "%";
   }
 
-  function updateStemButtons() {
+  function refreshSelectionState() {
     const audio = byId("player-audio");
-    for (const button of document.querySelectorAll("#jobs .stem-btn")) {
-      const active = Boolean(player.url) && button.dataset.url === player.url;
-      button.classList.toggle("active", active);
-      button.classList.toggle("playing", active && !audio.paused);
-      button.setAttribute("aria-pressed", String(active));
+    const active = Boolean(player.url);
+    const playing = active && !audio.paused;
+    for (const button of document.querySelectorAll("#jobs .stem-btn, #jobs .player-toggle, #player .player-toggle")) {
+      const isActive = active && button.dataset.url === player.url;
+      button.classList.toggle("active", isActive);
+      button.classList.toggle("playing", isActive && playing);
+      button.setAttribute("aria-pressed", String(isActive));
     }
   }
 
-  async function playOutput(job, output, label) {
-    const audio = byId("player-audio");
-    if (player.url === output.url && !player.controller) {
-      if (audio.paused) {
-        await audio.play();
-      } else {
-        audio.pause();
-      }
-      return;
-    }
-    const sameTrack = player.jobId === job.watch_id && Boolean(player.url);
-    const resumeAt = sameTrack ? audio.currentTime : 0;
-    const resume = sameTrack ? !audio.paused : true;
-    player.controller?.abort();
-    const controller = new AbortController();
-    player.controller = controller;
-    byId("player").hidden = false;
-    document.body.classList.add("has-player");
-    byId("player-title").textContent = job.title || job.watch_id;
-    byId("player-stem").textContent = `Loading ${label}...`;
-    try {
-      const response = await fetch(jamlyClient.outputURL(config, output.url), {
-        headers: { Authorization: "Bearer " + config.token },
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        let message = "";
-        try {
-          message = (await response.json()).error || "";
-        } catch (_error) {
-          // Non-JSON error bodies fall back to the HTTP status below.
-        }
-        throw new Error(message || "Could not load this stem (HTTP " + response.status + ")");
-      }
-      const data = await response.blob();
-      const type = /\.wav$/i.test(output.name || "") ? "audio/wav" : "audio/mpeg";
-      const objectURL = URL.createObjectURL(new Blob([data], { type }));
-      const previous = player.objectURL;
-      Object.assign(player, { url: output.url, jobId: job.watch_id, objectURL, controller: null });
-      audio.src = objectURL;
-      if (previous) URL.revokeObjectURL(previous);
-      audio.addEventListener("loadedmetadata", () => {
-        if (resumeAt && Number.isFinite(audio.duration)) {
-          audio.currentTime = Math.min(resumeAt, audio.duration);
-        }
-        applyPlaybackRate();
-        if (resume) audio.play().catch(() => updateStemButtons());
-      }, { once: true });
-      audio.load();
-      byId("player-stem").textContent = label;
-      updateStemButtons();
-    } catch (error) {
-      if (error.name === "AbortError") return;
-      if (player.controller === controller) player.controller = null;
-      byId("player-stem").textContent = player.url ? "Could not switch stems" : "Could not load stem";
-      throw error;
+  function buildToggle(entry) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "player-toggle";
+    button.dataset.url = entry.key;
+    const iconKey = entry.kind === "source" ? "wave" : stemIconKey(entry.stemKind);
+    button.appendChild(svgIcon(iconKey));
+    button.setAttribute("aria-label", entry.label);
+    return button;
+  }
+
+  function renderPlayerToggles() {
+    const container = byId("player-toggles");
+    if (!container) return;
+    container.replaceChildren();
+    if (!player.url || !Array.isArray(player.entries)) return;
+    for (const entry of player.entries) {
+      const button = buildToggle(entry);
+      button.addEventListener("click", () => selectAudio(player.job, entry));
+      container.appendChild(button);
     }
   }
+
+  function playbackCluster(job) {
+    const cluster = document.createElement("div");
+    cluster.className = "player-toggles";
+    cluster.setAttribute("role", "group");
+    cluster.setAttribute("aria-label", "Play audio sources");
+    for (const entry of buildPlayable(job)) {
+      const button = buildToggle(entry);
+      button.addEventListener("click", () => action(button, () => selectAudio(job, entry)));
+      cluster.appendChild(button);
+    }
+    return cluster;
+  }
+
+  async function selectAudio(job, entry) {
+    const audio = byId("player-audio");
+  if (player.url === entry.key && !player.controller) {
+    if (audio.paused) {
+      return audio.play();
+    }
+    audio.pause();
+    return;
+  }
+  const sameTrack = player.jobId === job.watch_id && Boolean(player.url);
+  const resumeAt = sameTrack ? audio.currentTime : 0;
+  const resume = sameTrack ? !audio.paused : true;
+  player.controller?.abort();
+  const controller = new AbortController();
+  player.controller = controller;
+  byId("player").hidden = false;
+  document.body.classList.add("has-player");
+  byId("player-title").textContent = job.title || job.watch_id;
+  byId("player-stem").textContent = `Loading ${entry.label}...`;
+  try {
+    const response = await fetch(audioFetchUrl(entry.key), {
+      headers: { Authorization: "Bearer " + config.token },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      let message = "";
+      try {
+        message = (await response.json()).error || "";
+      } catch (_error) {
+        // Non-JSON error bodies fall back to the HTTP status below.
+      }
+      throw new Error(message || "Could not load this audio (HTTP " + response.status + ")");
+    }
+    const data = await response.blob();
+    const type = entry.kind === "source" ? guessContentType(entry.key)
+      : (/\.wav$/i.test(entry.name || "") ? "audio/wav" : "audio/mpeg");
+    const objectURL = URL.createObjectURL(new Blob([data], { type }));
+    const previous = player.objectURL;
+    Object.assign(player, {
+      url: entry.key, jobId: job.watch_id, objectURL, controller: null,
+      entries: buildPlayable(job), job,
+    });
+    audio.src = objectURL;
+    if (previous) URL.revokeObjectURL(previous);
+    audio.addEventListener("loadedmetadata", () => {
+      if (resumeAt && Number.isFinite(audio.duration)) {
+        audio.currentTime = Math.min(resumeAt, audio.duration);
+      }
+      applyPlaybackRate();
+      if (resume) audio.play().catch(() => refreshSelectionState());
+    }, { once: true });
+    audio.load();
+    byId("player-stem").textContent = entry.label;
+    renderPlayerToggles();
+    refreshSelectionState();
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    if (player.controller === controller) player.controller = null;
+    byId("player-stem").textContent = player.url ? "Could not switch audio" : "Could not load audio";
+    throw error;
+  }
+}
+
+function playOutput(job, output, label) {
+  selectAudio(job, { key: output.url, label, kind: "output", name: output.name });
+}
 
   function closePlayer() {
     const audio = byId("player-audio");
@@ -490,10 +598,13 @@
     audio.removeAttribute("src");
     audio.load();
     if (player.objectURL) URL.revokeObjectURL(player.objectURL);
-    Object.assign(player, { url: null, jobId: null, objectURL: null, controller: null });
+    Object.assign(player, {
+      url: null, jobId: null, objectURL: null, controller: null, entries: [], job: null,
+    });
     byId("player").hidden = true;
     document.body.classList.remove("has-player");
-    updateStemButtons();
+    renderPlayerToggles();
+    refreshSelectionState();
   }
 
   function renderPagination(status) {
@@ -592,7 +703,7 @@
       error: status.error,
     });
     if (!status.current && renderKey === lastRenderKey) {
-      updateStemButtons();
+      refreshSelectionState();
       return;
     }
     lastRenderKey = renderKey;
@@ -649,8 +760,7 @@
       actions.className = "job-actions";
       const hasOutputs = Boolean(job.outputs.length || job.exports?.length);
       if (hasOutputs) {
-        const primary = stemGroup(job, job.outputs, output => outputLabel(output.kind), "");
-        if (primary) actions.appendChild(primary);
+        actions.appendChild(playbackCluster(job));
         for (const exp of job.exports || []) {
           const expModel = models.find(choice => choice.id === exp.model)?.label || exp.model;
           const expStem = exp.stem && exp.stem !== "drums" ? ` ${exp.stem}` : "";
@@ -711,7 +821,7 @@
       row.appendChild(main);
       byId("jobs").appendChild(row);
     }
-    updateStemButtons();
+    refreshSelectionState();
     if (status.error) showError(new Error(status.error));
   }
 
@@ -887,7 +997,7 @@
   });
   byId("player-close").addEventListener("click", closePlayer);
   for (const eventName of ["play", "pause", "ended"]) {
-    byId("player-audio").addEventListener(eventName, updateStemButtons);
+    byId("player-audio").addEventListener(eventName, refreshSelectionState);
   }
   applyPlaybackRate();
   document.addEventListener("visibilitychange", () => {
