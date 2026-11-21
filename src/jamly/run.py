@@ -293,8 +293,9 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
                                          ffmpeg, cancel_event, target_stem=stem)
                 # Keep the original on disk next to the published stems so it can be replayed as
                 # "Original" even when the input was a URL (yt-dlp output would otherwise live only in
-                # the temp directory). Local-file inputs already keep their own source path.
-                retained_source_url = source
+                # the temp directory). Local-file inputs already keep their own source path. The
+                # manifest keeps the canonical source_url; the retained local copy is recorded
+                # separately and surfaced via /source/{watch_id}.
                 orig_target = None
                 if local_source is None:
                     orig_ext = audio.suffix.lower() or "." + args.audio_format
@@ -302,9 +303,8 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
                         Path(audio_directory(directory))
                         / ("%s_original%s" % (_stem_file_prefix(wid, parsed, model=model), orig_ext))
                     )
-                    retained_source_url = str(orig_target)
                 manifest = dict(
-                    meta_dict(watch_id=wid, source_url=retained_source_url, title=metadata.get("title"),
+                    meta_dict(watch_id=wid, source_url=source, title=metadata.get("title"),
                               artist=metadata.get("artist") or (parsed[0] if parsed else None),
                               uploader=metadata.get("uploader"), duration=metadata.get("duration_seconds")),
                     processing_version=PROCESSING_VERSION, generation=uuid.uuid4().hex,
@@ -312,6 +312,8 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
                     outputs={name: {"file": path.name, "sha256": checksum(path)}
                              for name, path in destinations.items()},
                 )
+                if orig_target is not None:
+                    manifest["original"] = str(orig_target)
                 with Path(meta).open("w", encoding="utf-8") as file:
                     json.dump(manifest, file, ensure_ascii=False, indent=2)
                     file.flush()

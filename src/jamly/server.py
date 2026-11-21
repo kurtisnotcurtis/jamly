@@ -838,6 +838,10 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
                     self._json({"error": "source file is unavailable"}, 404)
                     return
                 content_type = mimetypes.guess_type(path.name)[0] or "audio/mpeg"
+                # Windows and Linux disagree on the WAV MIME type (audio/wav vs audio/x-wav); serve
+                # the canonical value so clients get a consistent Content-Type regardless of host.
+                if content_type == "audio/x-wav":
+                    content_type = "audio/wav"
                 size = path.stat().st_size
                 with path.open("rb") as file:
                     self.send_response(200)
