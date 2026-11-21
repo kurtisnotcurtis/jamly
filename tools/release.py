@@ -77,6 +77,7 @@ def _release_section(text: str, version_str: str) -> str:
         lines = _ensure_unreleased("".join(lines)).splitlines(keepends=True)
         idx = next(i for i, line in enumerate(lines) if UNRELEASED_RE.match(line))
 
+    header = "".join(lines[:idx])
     end = idx + 1
     while end < len(lines) and not DATED_SECTION_RE.match(lines[end]):
         end += 1
@@ -86,7 +87,7 @@ def _release_section(text: str, version_str: str) -> str:
         carried.pop(0)
 
     dated_line = "## [%s] - %s\n" % (version_str, date)
-    new_lines = [dated_line, "\n"]
+    new_lines = [header, dated_line, "\n"]
     if carried:
         new_lines += carried + ["\n"]
     new_lines += ["## [Unreleased]\n\n%s\n" % PLACEHOLDER, "\n"]
@@ -144,7 +145,7 @@ def _do_new(target: str) -> int:
     print("Next steps:")
     print("  git add -A")
     print('  git commit -m "Release %s"' % tag.lstrip("v"))
-    print("  git tag -a %s -m 'Release %s' --signing-key default" % (tag, tag.lstrip("v")))
+    print("  git tag -a %s -m 'Release %s'" % (tag, tag.lstrip("v")))
     print("  git push origin main --tags")
     print("  python tools/version.py --check --tag %s" % tag)
     return 0
