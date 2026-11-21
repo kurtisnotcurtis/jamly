@@ -269,8 +269,15 @@ def main() -> int:
                     assert (infos[0].frames, infos[0].channels, infos[0].samplerate) == (
                         infos[1].frames, infos[1].channels, infos[1].samplerate,
                     )
-                    output_url = job["outputs"][0]["url"].replace("/outputs/", "/app/download/", 1)
-                    downloaded = api(url, token, output_url, {"token": token}, form=True)
+                    # /outputs/<id>/<kind>?generation=<x> is served as a GET by _output; it reads
+                    # generation from the query and authorizes via the Bearer header. The former
+                    # POST to /app/download/ (a route that does not exist) hit do_POST's JSON guard.
+                    # api() always sends Origin when it POSTs; for a GET with no Origin the auth gate
+                    # accepts it (origin_ok is True when absent), so only the Bearer header is needed.
+                    request = Request(url + job["outputs"][0]["url"],
+                                      headers={"Authorization": "Bearer " + token})
+                    with build_opener(ProxyHandler({})).open(request, timeout=10) as response:
+                        downloaded = response.read()
                     assert len(downloaded) > 0
                     print("Bundled %s -> %s pair succeeded" % (model, fmt), flush=True)
                 assert len(set(generations)) == 2
