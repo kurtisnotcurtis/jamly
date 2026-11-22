@@ -250,7 +250,15 @@ def main() -> int:
                     deadline = time.monotonic() + 600
                     while time.monotonic() < deadline:
                         status = api(url, token, "/status")
-                        job = next(item for item in status["jobs"] if item["source_url"] == source)
+                        # Correlate the live job by its model + format: each /add here requests a
+                        # distinct pair, and url inputs now record their retained local copy under
+                        # source_url (not the original http URL), so match on those stable fields.
+                        job = next((item for item in status["jobs"]
+                                    if item.get("model") == model
+                                    and item.get("audio_format") == fmt), None)
+                        if job is None:
+                            time.sleep(.25)
+                            continue
                         if job["status"] in ("done", "skipped"):
                             break
                         if job["status"] == "error":

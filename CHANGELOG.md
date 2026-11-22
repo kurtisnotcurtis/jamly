@@ -6,6 +6,11 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 
 _Nothing yet._
 
+## [0.2.5] - 2026-11-22
+
+### Fixed
+- **CI bundle smoke test survives the retained-original change.** After `0.2.4` started recording a job's local source path in `source_url`, the packaged CI smoke check (`tools/bundle_smoke.py`) stopped matching completed jobs against the submitted HTTP URL and failed with `StopIteration`. It now correlates each queued iteration by its stable `model` + `audio_format` pair, which are unique per `/add` (htdemucs/mp3 vs htdemucs_ft/wav) and unaffected by the new source-path behavior.
+
 ## [0.2.4] - 2026-11-22
 
 ### Fixed
