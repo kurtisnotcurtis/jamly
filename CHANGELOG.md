@@ -2,16 +2,21 @@
 
 All notable changes to Jamly are documented here. This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release tags use `vX.Y.Z` and must match the package version reported by `python tools/version.py --check`.
 
-## [0.2.2] - 2026-11-21
+## [Unreleased]
 
-### Added
-- **Local CI mirror — `tools/dev-check.py`.** Stdlib-only script that reproduces `.github/workflows/ci.yml` step-for-step and fails fast on the first broken stage (lockstep version → `jamly-doctor` → pytest → unittest → ruff → Node extension tests → wheel build + fresh-install smoke). Heavier real-model checks opt in with `--integration`; the full browser run opts in with `--browser`.
-- **Pre-commit and pre-push gates — `tools/hooks/`.** Install once with `git config core.hooksPath tools/hooks`. The pre-commit gate runs the fast, wheel-free dev-check so commits stay quick; the pre-push gate runs the full suite (wheel smoke + audio pipeline) so a push is already CI-validated. Documented in `README.md` and `AGENTS.md`.
+_Nothing yet._
+
+## [0.2.4] - 2026-11-22
 
 ### Fixed
-- **Bundle smoke test.** Downloads from `GET /outputs` instead of a nonexistent `POST /app/download`, so native desktop archive verification succeeds across platforms (`tools/bundle_smoke.py`).
-- **Browser smoke test.** Tolerates launch-page navigation while probing readiness and toggles split outputs via the player toggle (not the stem button), making headless Chrome validation reliable (`tools/browser_smoke.mjs`).
+- **Regenerate deleted stems without `--replace-existing`.** When a track's manifest is still valid but one or more audio stems were deleted, Jamly now recognises the missing stems and reprocesses automatically instead of demanding the `--replace-existing` flag. A genuinely different or checksum-modified output still requires the flag (`src/jamly/run.py`, `src/jamly/outputs.py`).
+- **Original stem for URL inputs.** The retained copy of a downloaded stream (e.g. YouTube links) is now persisted beside the published stems and recorded as the job's source path, so the companion UI exposes an "Original" toggle again. Previously the retention copy never ran for URL downloads, leaving `source_path` empty (`src/jamly/run.py`).
 
+### Changed
+- **Systray tooltip.** Replaced the em-dash with a hyphen in the desktop tray status text (`src/jamly/tray.py`).
+
+### Added
+- **Processing pipeline documentation.** The Mermaid flowchart and stage breakdown previously inline in `README.md` moved to a dedicated `PROCESSING-PIPELINE.md`, which `README.md` now links to.
 
 ## [0.2.3] - 2026-11-21
 
@@ -24,10 +29,15 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 ### Fixed
 - **Reproducible sdist.** `MANIFEST.in` excludes `__pycache__` bytecode caches from the sdist instead of shipping dev-only `*.pyc` files that embed source mtimes, so local and CI builds stay in lockstep. (`MANIFEST.in`)
 
+## [0.2.2] - 2026-11-21
 
-## [Unreleased]
+### Added
+- **Local CI mirror — `tools/dev-check.py`.** Stdlib-only script that reproduces `.github/workflows/ci.yml` step-for-step and fails fast on the first broken stage (lockstep version → `jamly-doctor` → pytest → unittest → ruff → Node extension tests → wheel build + fresh-install smoke). Heavier real-model checks opt in with `--integration`; the full browser run opts in with `--browser`.
+- **Pre-commit and pre-push gates — `tools/hooks/`.** Install once with `git config core.hooksPath tools/hooks`. The pre-commit gate runs the fast, wheel-free dev-check so commits stay quick; the pre-push gate runs the full suite (wheel smoke + audio pipeline) so a push is already CI-validated. Documented in `README.md` and `AGENTS.md`.
 
-_Nothing yet._
+### Fixed
+- **Bundle smoke test.** Downloads from `GET /outputs` instead of a nonexistent `POST /app/download`, so native desktop archive verification succeeds across platforms (`tools/bundle_smoke.py`).
+- **Browser smoke test.** Tolerates launch-page navigation while probing readiness and toggles split outputs via the player toggle (not the stem button), making headless Chrome validation reliable (`tools/browser_smoke.mjs`).
 
 ## [0.2.1] - 2026-11-21
 
@@ -86,4 +96,3 @@ _Nothing yet._
   - An optional loopback web companion UI with single-use launch-file ticket pairing, plus a Chrome Manifest V3 extension and YouTube/YouTube Music userscript helpers.
   - Native desktop bundling from source (ffmpeg, ffprobe, LAME, OpenSSL) and PyInstaller one-dir packaging that uses CPU-only PyTorch on Linux (`tools/`, `Jamly.spec`).
   - A static showcase site with GitHub Pages deployment and CI matrix, tested by pytest, unittest, Node, and Ruff.
-

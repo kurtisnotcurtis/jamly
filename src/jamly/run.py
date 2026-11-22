@@ -26,7 +26,7 @@ from .models import DEFAULT_MODEL, DEFAULT_STEM, expected_output_kinds, validate
 from .naming import meta_dict, parse_title_artist, stem_prefix
 from .normalize import Input, local_audio_path, normalize_inputs_full
 from .outputs import (
-    PROCESSING_VERSION, audio_directory, checksum, publish_directory, read_manifest,
+    PROCESSING_VERSION, audio_directory, checksum, publish_directory, read_manifest_structural,
     recover_directory, resolve_output_path,
 )
 from .watch_queue import QueueError, WatchQueue, queue_owner
@@ -213,6 +213,36 @@ def result_from_manifest(wid: str, directory: Path, manifest: dict, status: str)
     )
 
 
+def _existing_output(wid: str, directory: Path, *, model: str, stem: str,
+                     audio_format: str) -> dict | None:
+    """Return the manifest of an identical track that can be skipped, or None to regenerate.
+
+    A matching identity whose stems are all present and hash-valid is safe to skip. When the same
+    track's audio was deleted (a missing output), None lets the caller reprocess without requiring
+    --replace-existing, since there is no distinct artifact being overwritten. Structurally invalid
+    or differently-identified outputs still raise so the caller can ask for --replace-existing.
+    """
+    try:
+        manifest = read_manifest_structural(directory)
+    except (OSError, ValueError, KeyError) as exc:
+        raise ValueError("Incomplete or outdated outputs; use --replace-existing: %s" % exc) from exc
+    if not (manifest["watch_id"] == wid and manifest.get("format") == audio_format
+            and manifest.get("model") == model and manifest.get("stem", DEFAULT_STEM) == stem):
+        raise ValueError(
+            "Incomplete or outdated outputs; use --replace-existing: output identity does not match")
+    for record in manifest["outputs"].values():
+        path = resolve_output_path(directory, record["file"])
+        if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
+            # A stem was deleted: regenerate it without demanding --replace-existing.
+            return None
+    for record in manifest["outputs"].values():
+        path = resolve_output_path(directory, record["file"])
+        if checksum(path) != record.get("sha256"):
+            raise ValueError(
+                "Incomplete or outdated outputs; use --replace-existing: output checksum mismatch: %s" % path)
+    return manifest
+
+
 def process_one(wid: str, args, progress=None, source_url=None, cancel_event=None) -> ItemResult:
     result = ItemResult(wid)
     source = source_url or wid
@@ -237,15 +267,10 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
         with FileLock(str(directory.parent / ("." + args.audio_format + ".lock")), timeout=0):
             recover_directory(directory)
             if directory.exists() and not args.replace_existing:
-                try:
-                    manifest = read_manifest(directory)
-                    if (manifest["watch_id"] != wid or manifest["format"] != args.audio_format
-                            or manifest.get("model") != model
-                            or manifest.get("stem", DEFAULT_STEM) != stem):
-                        raise ValueError("output identity does not match")
-                except (OSError, ValueError, KeyError) as exc:
-                    raise ValueError("Incomplete or outdated outputs; use --replace-existing: %s" % exc) from exc
-                return result_from_manifest(wid, directory, manifest, "skipped")
+                manifest = _existing_output(wid, directory, model=model, stem=stem,
+                                            audio_format=args.audio_format)
+                if manifest is not None:
+                    return result_from_manifest(wid, directory, manifest, "skipped")
 
             stage("metadata")
             ffmpeg_dir = detect_ffmpeg(
@@ -321,7 +346,12 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
                 stage("publish")
                 publish_directory(staged_dir, directory)
                 retained = None
-                if orig_target is not None and Path(orig_target).exists():
+                if orig_target is not None and audio is not None and Path(audio).exists():
+                    # Persist the downloaded original beside the published stems so it can be
+                    # replayed as "Original" even when the input was a URL (yt-dlp output would
+                    # otherwise live only in the temp directory). The guard checks the *source*
+                    # (audio), never orig_target, which this copy creates on first completion.
+                    Path(orig_target).parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(audio, orig_target)
                     with Path(orig_target).open("rb+") as file:
                         os.fsync(file.fileno())

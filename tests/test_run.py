@@ -100,6 +100,19 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(sf.info(result.nodrums_path).subtype, "FLOAT")
         self.assertFalse(any(path.name.startswith(".wav-") for path in directory.parent.iterdir()))
 
+    def test_url_download_retains_original_beside_stems_and_exposes_source_path(self):
+        # A YouTube/URL input has no local source file; the retained download must be written next
+        # to the published stems so it can be replayed as "Original". See regression for the
+        # retention copy that was guarded by a non-existent existence check.
+        result = self.process()
+        self.assertEqual(result.status, "done", result.error)
+        self.assertIsNotNone(getattr(result, "source_path", None))
+        original = Path(result.source_path)
+        self.assertTrue(original.exists(), "retained original was not persisted beside the stems")
+        self.assertEqual(sf.info(original).subtype, "FLOAT")
+        manifest = outputs.read_manifest(Path(result.meta_path).parent)
+        self.assertEqual(manifest["original"], str(original))
+
     def test_valid_existing_pair_is_reusable_without_network_or_dependencies(self):
         first = self.process()
         with patch.object(run, "ytdlp_command", side_effect=AssertionError("network not needed")):
@@ -160,6 +173,20 @@ class PipelineTests(unittest.TestCase):
         replaced = self.process()
         self.assertEqual(replaced.status, "done", replaced.error)
         outputs.read_manifest(Path(replaced.meta_path).parent)
+
+    def test_deleted_stems_are_regenerated_without_replace_flag(self):
+        result = self.process()
+        directory = Path(result.meta_path).parent
+        # Delete only the published stems, leaving metadata.json in place.
+        for path in (Path(result.drums_path), Path(result.nodrums_path)):
+            self.assertTrue(path.is_file())
+            path.unlink()
+        repeated = self.process()
+        self.assertEqual(repeated.status, "done", repeated.error)
+        self.assertNotEqual(result.generation, repeated.generation)
+        outputs.read_manifest(directory)
+        self.assertTrue(Path(result.drums_path).is_file())
+        self.assertTrue(Path(result.nodrums_path).is_file())
 
     def test_failed_directory_swap_restores_old_generation(self):
         first = self.process()

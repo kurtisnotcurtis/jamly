@@ -57,7 +57,7 @@ def tray_status(app) -> tuple[str, str]:
         detail = f"Idle ({done} ready)"
     else:
         detail = "Idle"
-    tooltip = f"Jamly — {detail}"[:127]
+    tooltip = f"Jamly - {detail}"[:127]
     return tooltip, f"Status: {detail}"
 
 

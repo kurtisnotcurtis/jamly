@@ -18,26 +18,26 @@ class TrayTests(unittest.TestCase):
             args = server.build_parser().parse_args(["--state-dir", root, "--port", "0"])
             app = server.ItemServer(args)
             try:
-                self.assertEqual(tray.tray_status(app), ("Jamly — Idle", "Status: Idle"))
+                self.assertEqual(tray.tray_status(app), ("Jamly - Idle", "Status: Idle"))
 
                 with app._status_lock:
                     app.queue.add("a", source_url="https://youtu.be/a")
                     app.queue.add("b", source_url="https://youtu.be/b")
                     app.queue.finish("b", "done")
-                self.assertEqual(tray.tray_status(app), ("Jamly — 1 queued", "Status: 1 queued"))
+                self.assertEqual(tray.tray_status(app), ("Jamly - 1 queued", "Status: 1 queued"))
 
                 with app._status_lock:
                     app._current = {"watch_id": "a", "stage": "separate", "progress": 42, "cancelling": False}
                 self.assertEqual(
                     tray.tray_status(app),
-                    ("Jamly — Separating audio (42%) · 1 queued", "Status: Separating audio (42%) · 1 queued"),
+                    ("Jamly - Separating audio (42%) · 1 queued", "Status: Separating audio (42%) · 1 queued"),
                 )
 
                 with app._status_lock:
                     app._current = {"watch_id": "a", "stage": "separate", "progress": 42, "cancelling": True}
                 self.assertEqual(
                     tray.tray_status(app),
-                    ("Jamly — Cancelling... · 1 queued", "Status: Cancelling... · 1 queued"),
+                    ("Jamly - Cancelling... · 1 queued", "Status: Cancelling... · 1 queued"),
                 )
 
                 with app._status_lock:
@@ -45,7 +45,7 @@ class TrayTests(unittest.TestCase):
                     app.queue.finish("a", "done")
                 self.assertEqual(
                     tray.tray_status(app),
-                    ("Jamly — Idle (2 ready)", "Status: Idle (2 ready)"),
+                    ("Jamly - Idle (2 ready)", "Status: Idle (2 ready)"),
                 )
             finally:
                 app.stop()

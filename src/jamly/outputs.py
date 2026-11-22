@@ -36,7 +36,8 @@ def resolve_output_path(directory: Path, name: str) -> Path:
     return audio_directory(directory) / name
 
 
-def read_manifest(directory: Path, *, verify_hashes: bool = True) -> dict:
+def read_manifest_structural(directory: Path) -> dict:
+    """Validate a manifest's structure without requiring its audio files to still exist."""
     data = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError("invalid output manifest")
@@ -55,7 +56,13 @@ def read_manifest(directory: Path, *, verify_hashes: bool = True) -> dict:
         name = record.get("file")
         if not isinstance(name, str) or Path(name).name != name or name in (".", ".."):
             raise ValueError("invalid output filename")
-        path = resolve_output_path(directory, name)
+    return data
+
+
+def read_manifest(directory: Path, *, verify_hashes: bool = True) -> dict:
+    data = read_manifest_structural(directory)
+    for record in data["outputs"].values():
+        path = resolve_output_path(directory, record["file"])
         if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
             raise ValueError("missing output: %s" % path)
         if verify_hashes and checksum(path) != record.get("sha256"):
