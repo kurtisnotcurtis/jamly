@@ -837,7 +837,7 @@ function playOutput(job, output, label) {
     let pollDelay = 2000;
     try {
       const status = await jamlyClient.status(config, queryState);
-      byId("connection").textContent = "Connected to your local companion. Jobs continue when this page closes.";
+      byId("connection").textContent = "Connected to your local companion. Jobs keep running even after you close this page.";
       if (byId("error").textContent === connectionError) byId("error").textContent = "";
       connectionError = "";
       render(status);

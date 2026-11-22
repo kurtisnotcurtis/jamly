@@ -1,0 +1,19 @@
+# Normalize line endings for reproducible builds and cross-platform parity.
+# All text/code files are stored as LF in the repo and checked out normalized,
+# so a Windows local build and the CI ubuntu-latest build start from identical
+# source bytes (the only remaining build-time variance is timestamps).
+* text=auto eol=lf
+
+# Explicit binary assets: never normalize, never strip.
+*.ico binary
+*.icns binary
+*.pyd binary
+*.dll binary
+*.bin binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.woff2 binary
+*.ttf binary

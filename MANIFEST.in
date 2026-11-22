@@ -1,3 +1,6 @@
 graft tools
 include uv.lock
 include DESIGN.md
+# Bytecode caches live only in a developer working tree (not in CI) and embed
+# source mtimes, so exclude them to keep the sdist reproducible byte-for-byte.
+recursive-exclude * *.pyc

@@ -13,6 +13,18 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 - **Browser smoke test.** Tolerates launch-page navigation while probing readiness and toggles split outputs via the player toggle (not the stem button), making headless Chrome validation reliable (`tools/browser_smoke.mjs`).
 
 
+## [0.2.3] - 2026-11-21
+
+### Added
+- **Build-reproducibility helper — `tools/repro_dist.py`.** Stdlib-only tool that rewrites an sdist or wheel with a fixed gzip epoch, sorted tar member order, LF metadata newlines (CRLF→LF in generated `METADATA`/`WHEEL`), and self-consistent RECORD hashes so local, CI and release artifacts match byte-for-byte after identical normalization. (`tools/repro_dist.py`)
+
+### Changed
+- **Companion status text.** The companion connection label now reads "Jobs keep running even after you close this page." instead of the previous wording, making it clear that jobs outlive the browser tab. (`src/jamly/web/app.js`)
+
+### Fixed
+- **Reproducible sdist.** `MANIFEST.in` excludes `__pycache__` bytecode caches from the sdist instead of shipping dev-only `*.pyc` files that embed source mtimes, so local and CI builds stay in lockstep. (`MANIFEST.in`)
+
+
 ## [Unreleased]
 
 _Nothing yet._
