@@ -78,7 +78,7 @@ jamly -i "/path/to/song.flac" --model htdemucs_6s --stem guitar
 
 | Preset | CLI Flag | How It Works & Tradeoff |
 |---|---|---|
-| **Balanced** *(default)* | `--model htdemucs` | Fast 4-stem Hybrid Transformer Demucs; computes `no_drums` by phase-aligned residual subtraction (`mix - drums`). |
+| **Balanced** *(default)* | `--model htdemucs` | Fast 4-stem Hybrid Transformer Demucs; sums the remaining complement stems in float64 with one shared peak-safe gain. |
 | **Higher quality** | `--model htdemucs_ft` | Fine-tuned 4-stem ensemble; cleaner transient isolation, takes **~4× longer** and downloads larger weights on first use. |
 | **6-stem (HTDemucs)** | `--model htdemucs_6s` | 6-stem Demucs (`drums`, `bass`, `guitar`, `piano`, `vocals`, `other`); single-pass speed and sums all 5 non-drum stems. |
 
