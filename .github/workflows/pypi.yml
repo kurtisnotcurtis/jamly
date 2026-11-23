@@ -37,7 +37,9 @@ jobs:
             uv run --locked python tools/version.py --check
           fi
       - name: Build sdist and wheel
-        run: uv build
+        run: |
+          uv build
+          uv run --locked python tools/repro_dist.py
       - name: Upload distribution artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

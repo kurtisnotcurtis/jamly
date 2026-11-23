@@ -7,7 +7,9 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 
 root = Path(SPECPATH).parent
 sys.path.insert(0, str(root / "src"))
+sys.path.insert(0, str(root / "tools"))
 from jamly import __version__  # noqa: E402
+from native_audio import sndfile_library  # noqa: E402
 
 staging = root / "build" / "desktop-staging"
 native = root / "build" / "native-audio" / "install" / "bin"
@@ -46,9 +48,7 @@ a = Analysis(
 )
 a.datas = [entry for entry in a.datas if not entry[0].endswith("/direct_url.json")]
 # Use a source-built PCM library instead of redistributing the wheel's opaque codec bundle.
-sndfile = native / "libsndfile-1.dll" if sys.platform == "win32" else (
-    native.parent / "lib" / ("libsndfile.1.dylib" if sys.platform == "darwin" else "libsndfile.so.1")
-)
+sndfile = sndfile_library(native.parent)
 replaced = False
 for index, (destination, source, kind) in enumerate(a.binaries):
     if "_soundfile_data" in destination and "libsndfile" in destination:

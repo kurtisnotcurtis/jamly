@@ -68,22 +68,43 @@ def run(argv: list[str], label: str, check: bool = True) -> bool:
     return status == 0
 
 
+def _current_wheel(dist_dir: Path) -> Path | None:
+    """Return the built wheel matching the repository's current version, or newest fallback."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    try:
+        import version as version_tool
+        current = version_tool.check_versions(ROOT)
+    except Exception:
+        current = None
+    if current:
+        exact = sorted(dist_dir.glob(f"jamly_audio_sep-{current}-*.whl"))
+        if exact:
+            return exact[-1]
+    wheels = sorted(dist_dir.glob("*.whl"), key=lambda p: p.stat().st_mtime)
+    return wheels[-1] if wheels else None
+
+
 def _wheel_smoke(use_uv: bool) -> bool:
     """Fresh-install the built wheel and exercise it."""
     if not (use_uv and _have("uv")):
         print("\n" + "=" * 72)
         print("==> Wheel build + fresh-install smoke\n    [skip] uv not available")
         return True
+    dist_dir = ROOT / "dist"
+    for stale in list(dist_dir.glob("*.whl")) + list(dist_dir.glob("*.tar.gz")):
+        stale.unlink(missing_ok=True)
     if not run(["uv", "build"], "Build sdist + wheel"):
         return False
-    whl = sorted(ROOT.glob("dist/*.whl"))
-    if not whl:
+    if not run([sys.executable, str(ROOT / "tools" / "repro_dist.py")], "Normalize dist artifacts"):
+        return False
+    whl = _current_wheel(dist_dir)
+    if whl is None:
         print("    [fail] no wheel produced by `uv build`")
         return False
     # --no-sync so uv doesn't re-resolve and overwrite the just-installed wheel.
     runner = ["uv", "run", "--no-sync"]
     installed = run(
-        ["uv", "pip", "install", "--no-deps", "--force-reinstall", str(whl[-1])],
+        ["uv", "pip", "install", "--no-deps", "--force-reinstall", str(whl)],
         "Install built wheel into a clean environment",
     )
     if not installed:
@@ -150,20 +171,19 @@ def main(argv=None) -> int:
         return _fail()
 
     if args.integration:
-        have_audio = True
-        try:  # numpy + soundfile are the pipeline's real deps
-            import soundfile  # noqa: F401
-        except Exception as exc:  # pragma: no cover - environment dependent
-            print("\n[skip] integration pipeline (soundfile unavailable: %s)" % exc)
-            have_audio = False
-        if have_audio:
-            integration_base = ["uv", "run", "--no-sync", "python"] if (use_uv and not args.no_build) else base
-            if not run(
-                integration_base + ["-m", "unittest", "discover", "-s", "tests", "-p",
-                                    "integration_pipeline.py"],
-                "Real-model audio pipeline (generated WAV)",
-            ):
-                return _fail()
+        integration_base = ["uv", "run", "--no-sync", "python"] if (use_uv and not args.no_build) else base
+        probe = subprocess.run(
+            integration_base + ["-c", "import soundfile"],
+            cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
+        if probe.returncode != 0:
+            print("\n[skip] integration pipeline (soundfile unavailable in target environment)")
+        elif not run(
+            integration_base + ["-m", "unittest", "discover", "-s", "tests", "-p",
+                                "integration_pipeline.py"],
+            "Real-model audio pipeline (generated WAV)",
+        ):
+            return _fail()
 
     if args.browser:
         if not _have("node"):

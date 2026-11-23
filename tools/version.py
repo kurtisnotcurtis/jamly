@@ -8,7 +8,11 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+TOOLS_DIR = Path(__file__).resolve().parent
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+
+from package_render import SEMVER_RE  # noqa: E402
 
 INIT_PY = ROOT / "src" / "jamly" / "__init__.py"
 PYPROJECT_TOML = ROOT / "pyproject.toml"

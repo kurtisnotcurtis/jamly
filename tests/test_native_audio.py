@@ -51,6 +51,8 @@ def _load_tool(filename: str):
 
 native_audio = _load_native_audio()
 build_companion = _load_tool("build_companion.py")
+repro_dist = _load_tool("repro_dist.py")
+dev_check = _load_tool("dev-check.py")
 version_tool = _load_version_tool()
 winget_tool = _load_winget_tool()
 aur_tool = _load_tool("render_aur.py")
@@ -434,6 +436,62 @@ class NativeSourcesArchiveTests(unittest.TestCase):
                 )
                 for info in zf.infolist():
                     self.assertEqual(info.compress_type, zipfile.ZIP_STORED)
+
+
+class ReproDistAndDevCheckTests(unittest.TestCase):
+    def test_repro_dist_normalizes_wheel_and_sdist_idempotently(self):
+        import base64
+        import tarfile
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dist = Path(tmp)
+            wheel = dist / "jamly_audio_sep-0.2.5-py3-none-any.whl"
+            with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("jamly/__init__.py", b"__version__ = '0.2.5'\n")
+                zf.writestr("jamly_audio_sep-0.2.5.dist-info/METADATA", b"Name: jamly-audio-sep\r\nVersion: 0.2.5\r\n")
+                zf.writestr("jamly_audio_sep-0.2.5.dist-info/RECORD", b"stale,,\n")
+
+            repro_dist._canonical_wheel(wheel)
+            first_whl = wheel.read_bytes()
+            repro_dist._canonical_wheel(wheel)
+            self.assertEqual(wheel.read_bytes(), first_whl)
+            with zipfile.ZipFile(wheel) as zf:
+                meta = zf.read("jamly_audio_sep-0.2.5.dist-info/METADATA")
+                self.assertNotIn(b"\r\n", meta)
+                record = zf.read("jamly_audio_sep-0.2.5.dist-info/RECORD").decode("utf-8")
+                expected_digest = base64.urlsafe_b64encode(hashlib.sha256(meta).digest()).rstrip(b"=").decode("ascii")
+                self.assertIn(f"jamly_audio_sep-0.2.5.dist-info/METADATA,sha256={expected_digest},{len(meta)}", record)
+
+            sdist = dist / "jamly_audio_sep-0.2.5.tar.gz"
+            with tarfile.open(sdist, "w:gz") as tf:
+                for name, payload in (
+                    ("jamly_audio_sep-0.2.5/z.txt", b"z"),
+                    ("jamly_audio_sep-0.2.5/PKG-INFO", b"Name: jamly-audio-sep\r\n"),
+                ):
+                    info = tarfile.TarInfo(name)
+                    info.size = len(payload)
+                    tf.addfile(info, io.BytesIO(payload))
+
+            repro_dist._canonical_sdist(sdist)
+            first_sdist = sdist.read_bytes()
+            repro_dist._canonical_sdist(sdist)
+            self.assertEqual(sdist.read_bytes(), first_sdist)
+            with tarfile.open(sdist, "r:gz") as tf:
+                names = [member.name for member in tf.getmembers()]
+                self.assertEqual(names, sorted(names))
+                self.assertNotIn(b"\r\n", tf.extractfile("jamly_audio_sep-0.2.5/PKG-INFO").read())
+
+    def test_dev_check_selects_current_version_wheel_over_stale_wheels(self):
+        from jamly import __version__
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dist = Path(tmp)
+            stale = dist / "jamly_audio_sep-0.9.9-py3-none-any.whl"
+            current = dist / f"jamly_audio_sep-{__version__}-py3-none-any.whl"
+            stale.write_bytes(b"stale")
+            current.write_bytes(b"current")
+            self.assertEqual(dev_check._current_wheel(dist), current)
 
 
 if __name__ == "__main__":
