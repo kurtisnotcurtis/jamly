@@ -15,15 +15,33 @@ from .core import build_stem_encode_cmd, check_cancelled, run
 BLOCK_FRAMES = 65536
 
 
-def mix_pair(stems: dict[str, str], workdir: Path, cancel_event=None, *,
-             target_stem: str = "drums") -> tuple[dict, dict]:
-    export_all = target_stem == "all"
-    if len(stems) < 2 or (not export_all and target_stem not in stems):
-        if export_all:
+def _validate_stems(stems: dict[str, str], target_stem: str) -> None:
+    if target_stem == "all":
+        if len(stems) < 2:
             raise ValueError("At least two stems are required")
+        return
+    if target_stem not in stems or len(stems) < 2:
         if target_stem == "drums":
             raise ValueError("A drums stem and at least one non-drum stem are required")
         raise ValueError("A %s stem and at least one other stem are required" % target_stem)
+
+
+def _open_matching_stems(stack: ExitStack, stems: dict[str, str],
+                         reference_key: str | None) -> tuple[dict, tuple[int, int, int]]:
+    inputs = {name: stack.enter_context(sf.SoundFile(path)) for name, path in stems.items()}
+    reference = inputs[reference_key] if reference_key else next(iter(inputs.values()))
+    shape = (reference.frames, reference.samplerate, reference.channels)
+    if not reference.frames:
+        raise ValueError("The separator produced empty audio")
+    if any((file.frames, file.samplerate, file.channels) != shape for file in inputs.values()):
+        raise ValueError("Separated stems have different lengths, sample rates, or channels")
+    return inputs, shape
+
+
+def mix_pair(stems: dict[str, str], workdir: Path, cancel_event=None, *,
+             target_stem: str = "drums") -> tuple[dict, dict]:
+    _validate_stems(stems, target_stem)
+    export_all = target_stem == "all"
     complement = "no_" + target_stem
     paths = (
         {name: Path(path) for name, path in stems.items()}
@@ -35,13 +53,7 @@ def mix_pair(stems: dict[str, str], workdir: Path, cancel_event=None, *,
     )
     peak = 0.0
     with ExitStack() as stack:
-        inputs = {name: stack.enter_context(sf.SoundFile(path)) for name, path in stems.items()}
-        reference = next(iter(inputs.values())) if export_all else inputs[target_stem]
-        shape = (reference.frames, reference.samplerate, reference.channels)
-        if not reference.frames:
-            raise ValueError("The separator produced empty audio")
-        if any((file.frames, file.samplerate, file.channels) != shape for file in inputs.values()):
-            raise ValueError("Separated stems have different lengths, sample rates, or channels")
+        inputs, shape = _open_matching_stems(stack, stems, None if export_all else target_stem)
         outputs = (
             None if export_all else {
                 name: stack.enter_context(sf.SoundFile(

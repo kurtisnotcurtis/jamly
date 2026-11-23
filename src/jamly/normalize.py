@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from urllib.request import url2pathname
 
 WATCH_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+STABLE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 LOCAL_AUDIO_EXTENSIONS = {
     ".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".opus", ".wma", ".aiff", ".aif", ".alac",
 }
@@ -28,6 +29,20 @@ class Input:
 
 def is_valid_watch_id(text: str) -> bool:
     return isinstance(text, str) and WATCH_ID_RE.fullmatch(text.strip()) is not None
+
+
+def is_valid_stable_id(text: str) -> bool:
+    return isinstance(text, str) and STABLE_ID_RE.fullmatch(text) is not None
+
+
+def validate_local_audio_suffix(suffix: str, label: str) -> str:
+    lowered = suffix.lower()
+    if lowered not in LOCAL_AUDIO_EXTENSIONS:
+        raise InputError(
+            "Unsupported local audio file extension %r; use wav, mp3, flac, m4a, ogg, opus, aac, aiff, or wma"
+            % (lowered or label)
+        )
+    return lowered
 
 
 def extract_watch_id(input_text: str | None) -> str:
@@ -52,6 +67,25 @@ def extract_watch_id(input_text: str | None) -> str:
     return candidate
 
 
+def _parse_file_uri(source: str) -> Path:
+    parsed = urlsplit(source)
+    if parsed.netloc and parsed.netloc.lower() != "localhost":
+        raise InputError("Remote file:// hosts are not supported")
+    if parsed.query or parsed.fragment or not parsed.path:
+        raise InputError("Invalid file:// URI")
+    raw_path = url2pathname(unquote(parsed.path))
+    validate_local_audio_suffix(Path(raw_path).suffix, raw_path)
+    return Path(raw_path).expanduser().resolve()
+
+
+def _is_explicit_local_path(source: str) -> bool:
+    return (
+        bool(_WINDOWS_DRIVE_RE.match(source))
+        or source.startswith(("/", "./", "../", "~/", ".\\", "..\\", "~\\"))
+        or "\\" in source
+    )
+
+
 def local_audio_path(input_text: str | None) -> Path | None:
     if not isinstance(input_text, str) or not input_text.strip():
         return None
@@ -59,19 +93,7 @@ def local_audio_path(input_text: str | None) -> Path | None:
     if any(ord(char) < 32 for char in source):
         return None
     if source.lower().startswith("file://"):
-        parsed = urlsplit(source)
-        if parsed.netloc and parsed.netloc.lower() != "localhost":
-            raise InputError("Remote file:// hosts are not supported")
-        if parsed.query or parsed.fragment or not parsed.path:
-            raise InputError("Invalid file:// URI")
-        raw_path = url2pathname(unquote(parsed.path))
-        suffix = Path(raw_path).suffix.lower()
-        if suffix not in LOCAL_AUDIO_EXTENSIONS:
-            raise InputError(
-                "Unsupported local audio file extension %r; use wav, mp3, flac, m4a, ogg, opus, aac, aiff, or wma"
-                % (suffix or raw_path)
-            )
-        return Path(raw_path).expanduser().resolve()
+        return _parse_file_uri(source)
     if "://" in source or is_valid_watch_id(source):
         return None
     try:
@@ -79,25 +101,11 @@ def local_audio_path(input_text: str | None) -> Path | None:
         return None
     except InputError:
         pass
-    is_explicit_path = (
-        bool(_WINDOWS_DRIVE_RE.match(source))
-        or source.startswith(("/", "./", "../", "~/", ".\\", "..\\", "~\\"))
-        or "\\" in source
-    )
     suffix = Path(source).suffix.lower()
-    if is_explicit_path:
-        if suffix not in LOCAL_AUDIO_EXTENSIONS:
-            raise InputError(
-                "Unsupported local audio file extension %r; use wav, mp3, flac, m4a, ogg, opus, aac, aiff, or wma"
-                % (suffix or source)
-            )
+    if _is_explicit_local_path(source):
+        validate_local_audio_suffix(suffix, source)
         return Path(source).expanduser().resolve()
-    is_audio_filename = (
-        suffix in LOCAL_AUDIO_EXTENSIONS
-        and not source.lower().startswith("ytsearch")
-        and "/" not in source
-    )
-    if is_audio_filename:
+    if suffix in LOCAL_AUDIO_EXTENSIONS and not source.lower().startswith("ytsearch") and "/" not in source:
         return Path(source).expanduser().resolve()
     return None
 

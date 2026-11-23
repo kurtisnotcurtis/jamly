@@ -6,14 +6,14 @@ import copy
 import json
 import os
 from pathlib import Path
-import re
 import threading
 import time
 import uuid
 
 from filelock import FileLock, Timeout
 
-from .models import DEFAULT_MODEL, DEFAULT_STEM
+from .models import DEFAULT_AUDIO_FORMAT, DEFAULT_MODEL, DEFAULT_STEM
+from .normalize import is_valid_stable_id
 
 
 class QueueError(RuntimeError):
@@ -58,6 +58,36 @@ class WatchQueue:
         return cloned
 
     @classmethod
+    def _parse_record(cls, record: object, done: set[str]) -> dict:
+        if not isinstance(record, dict):
+            raise ValueError("each job must be an object")
+        wid = record.get("watch_id")
+        if not is_valid_stable_id(wid):
+            raise ValueError("job has an invalid stable id")
+        status = record.get("status", "done" if wid in done else "pending")
+        if status not in cls.STATUSES:
+            raise ValueError("unknown job status: %r" % status)
+        # Only a job interrupted while running is automatically resumed.
+        if status == "running":
+            status = "pending"
+        source = record.get("source_url") or wid
+        if not isinstance(source, str):
+            raise ValueError("source_url must be a string")
+        original_path = record.get("original_path")
+        if original_path is not None and not isinstance(original_path, str):
+            raise ValueError("original_path must be a string")
+        options = record.get("options", {})
+        if not isinstance(options, dict):
+            raise ValueError("job options must be an object")
+        exports = record.get("exports", {})
+        if not isinstance(exports, dict):
+            raise ValueError("job exports must be an object")
+        return dict(
+            record, watch_id=wid, source_url=source, original_path=original_path,
+            status=status, options=options, exports=exports, title=record.get("title"),
+        )
+
+    @classmethod
     def from_path(cls, path: str) -> "WatchQueue":
         queue = cls(path)
         if not Path(path).exists():
@@ -69,39 +99,15 @@ class WatchQueue:
             done = data.get("done", [])
             if not isinstance(done, list):
                 raise ValueError("done must be a list")
+            done_set = set(done)
             queue._revision = int(data.get("revision", 0))
             seen = set()
             for record in data["items"]:
-                if not isinstance(record, dict):
-                    raise ValueError("each job must be an object")
-                wid = record.get("watch_id")
-                if not isinstance(wid, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", wid):
-                    raise ValueError("job has an invalid stable id")
+                entry = cls._parse_record(record, done_set)
+                wid = entry["watch_id"]
                 if wid in seen:
                     continue
                 seen.add(wid)
-                status = record.get("status", "done" if wid in done else "pending")
-                if status not in cls.STATUSES:
-                    raise ValueError("unknown job status: %r" % status)
-                # Only a job interrupted while running is automatically resumed.
-                if status == "running":
-                    status = "pending"
-                source = record.get("source_url") or wid
-                if not isinstance(source, str):
-                    raise ValueError("source_url must be a string")
-                original_path = record.get("original_path")
-                if original_path is not None and not isinstance(original_path, str):
-                    raise ValueError("original_path must be a string")
-                options = record.get("options", {})
-                if not isinstance(options, dict):
-                    raise ValueError("job options must be an object")
-                exports = record.get("exports", {})
-                if not isinstance(exports, dict):
-                    raise ValueError("job exports must be an object")
-                entry = dict(
-                    record, watch_id=wid, source_url=source, original_path=original_path,
-                    status=status, options=options, exports=exports, title=record.get("title"),
-                )
                 queue._index[wid] = len(queue._items)
                 queue._items.append(entry)
                 queue._by_id[wid] = entry
@@ -110,7 +116,7 @@ class WatchQueue:
         return queue
 
     def add(self, watch_id: str, title=None, source_url=None, *, retry=False, options=None) -> bool:
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", watch_id):
+        if not is_valid_stable_id(watch_id):
             raise ValueError("invalid stable id")
         now = time.time()
         previous = self._by_id.get(watch_id)
@@ -227,12 +233,12 @@ class WatchQueue:
         title: str | None = None,
         model: str = DEFAULT_MODEL,
         stem: str = DEFAULT_STEM,
-        audio_format: str = "mp3",
+        audio_format: str = DEFAULT_AUDIO_FORMAT,
         outputs: dict[str, str],
         generation: str,
         finished_at: float | None = None,
     ) -> bool:
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", watch_id):
+        if not is_valid_stable_id(watch_id):
             raise ValueError("invalid stable id")
         export_key = self._export_key(model, stem, audio_format)
         export_entry = {
@@ -325,7 +331,7 @@ class WatchQueue:
             opts = item.get("options") or {}
             model = opts.get("model", DEFAULT_MODEL)
             stem = opts.get("stem", DEFAULT_STEM)
-            audio_format = opts.get("audio_format", "mp3")
+            audio_format = opts.get("audio_format", DEFAULT_AUDIO_FORMAT)
             exports = dict(item.get("exports") or {})
             export_key = self._export_key(model, stem, audio_format)
             exports[export_key] = {

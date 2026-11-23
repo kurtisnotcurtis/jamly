@@ -3,6 +3,8 @@ from __future__ import annotations
 
 DEFAULT_MODEL = "htdemucs"
 DEFAULT_STEM = "drums"
+DEFAULT_AUDIO_FORMAT = "mp3"
+AUDIO_FORMATS = ("mp3", "wav")
 STEMS_4 = ("drums", "bass", "other", "vocals")
 STEMS_6 = ("drums", "bass", "other", "vocals", "guitar", "piano")
 ALL_OUTPUT_KINDS = frozenset(STEMS_6 + tuple("no_" + s for s in STEMS_6) + ("metadata",))
@@ -90,6 +92,12 @@ def validate_stem(value: str, model: str | None = None) -> str:
             raise ValueError(
                 "Stem %r requires the 6-stem (htdemucs_6s) preset" % value
             )
+    return value
+
+
+def validate_audio_format(value: str) -> str:
+    if not isinstance(value, str) or value not in AUDIO_FORMATS:
+        raise ValueError("audio_format must be mp3 or wav")
     return value
 
 

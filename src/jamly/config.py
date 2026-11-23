@@ -17,7 +17,10 @@ from filelock import FileLock
 from platformdirs import user_data_path
 
 from . import __version__
-from .models import DEFAULT_MODEL, DEFAULT_STEM, MODELS, STEM_MODES, validate_model, validate_stem
+from .models import (
+    AUDIO_FORMATS, DEFAULT_AUDIO_FORMAT, DEFAULT_MODEL, DEFAULT_STEM, MODELS, STEM_MODES,
+    validate_audio_format, validate_model, validate_stem,
+)
 
 API_VERSION = 3
 
@@ -57,7 +60,7 @@ def add_pipeline_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--queue", default=None, help="Override the queue file")
     parser.add_argument("--ffmpeg-dir", default=None, help="Directory containing ffmpeg and ffprobe")
     parser.add_argument("-o", "--output-dir", default=default_output_directory())
-    parser.add_argument("--audio-format", choices=("mp3", "wav"), default="mp3")
+    parser.add_argument("--audio-format", choices=AUDIO_FORMATS, default=DEFAULT_AUDIO_FORMAT)
     parser.add_argument("--model", choices=tuple(MODELS), default=DEFAULT_MODEL,
                         help="htdemucs: Balanced (default); htdemucs_ft: Higher quality (~4x slower); "
                              "htdemucs_6s: 6-stem HTDemucs")
@@ -150,8 +153,8 @@ def validate_preferences(data: dict) -> dict:
         validate_model(data["model"])
     if "stem" in data:
         validate_stem(data["stem"], data["model"] if "model" in data else None)
-    if "audio_format" in data and data["audio_format"] not in ("mp3", "wav"):
-        raise ValueError("audio_format must be mp3 or wav")
+    if "audio_format" in data:
+        validate_audio_format(data["audio_format"])
     if "output_dir" in data:
         value = data["output_dir"]
         if not isinstance(value, str) or not value.strip() or any(ord(char) < 32 for char in value):
@@ -184,47 +187,57 @@ def write_private_json(path: Path, data: dict) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def _config_file_args(parser: argparse.ArgumentParser, path: str | None) -> list[str]:
+    if not path:
+        return []
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    allowed = {action.dest for action in parser._actions} - {"help", "config", "version"}
+    if not isinstance(data, dict) or set(data) - allowed:
+        raise ValueError("unsupported server configuration fields")
+    # Feed values back through argparse so types and choices are validated too.
+    config_args: list[str] = []
+    for action in parser._actions:
+        if action.dest not in data:
+            continue
+        value = data[action.dest]
+        option = next((name for name in action.option_strings if name.startswith("--")), None)
+        if not option:
+            continue
+        if isinstance(action, argparse._StoreTrueAction):
+            if not isinstance(value, bool):
+                raise ValueError("%s must be a boolean" % action.dest)
+            if value:
+                config_args.append(option)
+        elif isinstance(action, argparse._AppendAction):
+            if not isinstance(value, list):
+                raise ValueError("%s must be a list" % action.dest)
+            for entry in value:
+                config_args.extend((option, str(entry)))
+        elif value is not None:
+            config_args.extend((option, str(value)))
+    return config_args
+
+
+def _preference_args(parsed: argparse.Namespace) -> list[str]:
+    state, _queue = runtime_paths(parsed)
+    path = state / "preferences.json"
+    if not path.exists():
+        return []
+    try:
+        data = validate_preferences(json.loads(path.read_text(encoding="utf-8")))
+    except ValueError as exc:
+        raise ValueError("Invalid companion settings in %s: %s" % (path, exc)) from exc
+    return [part for key, value in data.items() for part in ("--" + key.replace("_", "-"), value)]
+
+
 def parse_configured_args(parser: argparse.ArgumentParser, argv=None, *,
                           preferences: bool = False) -> argparse.Namespace:
     argv = list(sys.argv[1:] if argv is None else argv)
     preliminary, _ = parser.parse_known_args(argv)
-    path = getattr(preliminary, "config", None)
-    config_args = []
-    if path:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-        allowed = {action.dest for action in parser._actions} - {"help", "config", "version"}
-        if not isinstance(data, dict) or set(data) - allowed:
-            raise ValueError("unsupported server configuration fields")
-        # Feed values back through argparse so types and choices are validated too.
-        for action in parser._actions:
-            if action.dest not in data:
-                continue
-            value = data[action.dest]
-            option = next((name for name in action.option_strings if name.startswith("--")), None)
-            if not option:
-                continue
-            if isinstance(action, argparse._StoreTrueAction):
-                if not isinstance(value, bool):
-                    raise ValueError("%s must be a boolean" % action.dest)
-                if value:
-                    config_args.append(option)
-            elif isinstance(action, argparse._AppendAction):
-                if not isinstance(value, list):
-                    raise ValueError("%s must be a list" % action.dest)
-                for entry in value:
-                    config_args.extend((option, str(entry)))
-            elif value is not None:
-                config_args.extend((option, str(value)))
+    config_args = _config_file_args(parser, getattr(preliminary, "config", None))
     parsed = parser.parse_args(config_args + argv)
     if preferences:
-        state, _queue = runtime_paths(parsed)
-        path = state / "preferences.json"
-        if path.exists():
-            try:
-                data = validate_preferences(json.loads(path.read_text(encoding="utf-8")))
-            except ValueError as exc:
-                raise ValueError("Invalid companion settings in %s: %s" % (path, exc)) from exc
-            saved_args = [part for key, value in data.items()
-                          for part in ("--" + key.replace("_", "-"), value)]
+        saved_args = _preference_args(parsed)
+        if saved_args:
             parsed = parser.parse_args(config_args + saved_args + argv)
     return parsed

@@ -7,7 +7,6 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import sys
 import tempfile
@@ -24,9 +23,12 @@ from .core import (
     run as _run, sanitize_filename, separate_stems,
 )
 from .logging import Logger
-from .models import DEFAULT_MODEL, DEFAULT_STEM, expected_output_kinds, validate_model, validate_stem
+from .models import (
+    DEFAULT_MODEL, DEFAULT_STEM, expected_output_kinds, validate_audio_format,
+    validate_model, validate_stem,
+)
 from .naming import meta_dict, parse_title_artist, stem_prefix
-from .normalize import Input, local_audio_path, normalize_inputs_full
+from .normalize import Input, is_valid_stable_id, local_audio_path, normalize_inputs_full
 from .outputs import (
     PROCESSING_VERSION, audio_directory, checksum, publish_directory, read_manifest_structural,
     recover_directory, resolve_output_path,
@@ -103,46 +105,42 @@ def _fetch_item_metadata(ytdlp_exe, source_url: str, cancel_event=None) -> dict:
     }
 
 
-def _fetch_local_metadata(ffprobe_exe: str, path: Path, cancel_event=None) -> dict:
-    check_cancelled(cancel_event)
-    if not path.exists() or not path.is_file():
-        raise ValueError("Local audio file not found: %s" % path)
-    if path.stat().st_size == 0:
-        raise ValueError("Local audio file is empty: %s" % path)
-    if Path(ffprobe_exe).is_file():
-        cmd = [
-            ffprobe_exe, "-v", "quiet", "-print_format", "json",
-            "-show_format", "-show_streams", str(path),
-        ]
-        result = _run(cmd, cancel_event=cancel_event, timeout=METADATA_FETCH_TIMEOUT)
-        if not result.ok:
-            raise ValueError("Cannot read local audio file: %s" % path.name)
+def _probe_ffprobe(ffprobe_exe: str, path: Path, cancel_event=None) -> dict:
+    cmd = [
+        ffprobe_exe, "-v", "quiet", "-print_format", "json",
+        "-show_format", "-show_streams", str(path),
+    ]
+    result = _run(cmd, cancel_event=cancel_event, timeout=METADATA_FETCH_TIMEOUT)
+    if not result.ok:
+        raise ValueError("Cannot read local audio file: %s" % path.name)
+    try:
+        data = json.loads(result.stdout)
+    except ValueError as exc:
+        raise ValueError("ffprobe returned invalid metadata") from exc
+    streams = data.get("streams") if isinstance(data, dict) else None
+    if not isinstance(streams, list) or not any(
+        isinstance(stream, dict) and stream.get("codec_type") == "audio" for stream in streams
+    ):
+        raise ValueError("Local file does not contain a readable audio stream: %s" % path.name)
+    fmt = data.get("format") if isinstance(data.get("format"), dict) else {}
+    raw_tags = fmt.get("tags") if isinstance(fmt.get("tags"), dict) else {}
+    tags = {str(k).lower(): v.strip() for k, v in raw_tags.items() if isinstance(v, str) and v.strip()}
+    duration = None
+    if fmt.get("duration") is not None:
         try:
-            data = json.loads(result.stdout)
-        except ValueError as exc:
-            raise ValueError("ffprobe returned invalid metadata") from exc
-        streams = data.get("streams") if isinstance(data, dict) else None
-        if not isinstance(streams, list) or not any(
-            isinstance(stream, dict) and stream.get("codec_type") == "audio" for stream in streams
-        ):
-            raise ValueError("Local file does not contain a readable audio stream: %s" % path.name)
-        fmt = data.get("format") if isinstance(data.get("format"), dict) else {}
-        raw_tags = fmt.get("tags") if isinstance(fmt.get("tags"), dict) else {}
-        tags = {str(k).lower(): v.strip() for k, v in raw_tags.items() if isinstance(v, str) and v.strip()}
-        raw_duration = fmt.get("duration")
-        duration = None
-        if raw_duration is not None:
-            try:
-                duration = int(float(raw_duration))
-            except (TypeError, ValueError):
-                duration = None
-        return {
-            "id": path.stem,
-            "title": tags.get("title") or path.stem,
-            "artist": tags.get("artist") or tags.get("album_artist"),
-            "uploader": "local file",
-            "duration_seconds": duration,
-        }
+            duration = int(float(fmt["duration"]))
+        except (TypeError, ValueError):
+            duration = None
+    return {
+        "id": path.stem,
+        "title": tags.get("title") or path.stem,
+        "artist": tags.get("artist") or tags.get("album_artist"),
+        "uploader": "local file",
+        "duration_seconds": duration,
+    }
+
+
+def _probe_soundfile(path: Path) -> dict:
     import soundfile as sf
     try:
         info = sf.info(str(path))
@@ -151,12 +149,20 @@ def _fetch_local_metadata(ffprobe_exe: str, path: Path, cancel_event=None) -> di
     if not info.frames or not info.samplerate:
         raise ValueError("Local audio file has no audio frames: %s" % path.name)
     return {
-        "id": path.stem,
-        "title": path.stem,
-        "artist": None,
-        "uploader": "local file",
-        "duration_seconds": int(info.frames // info.samplerate),
+        "id": path.stem, "title": path.stem, "artist": None,
+        "uploader": "local file", "duration_seconds": int(info.frames // info.samplerate),
     }
+
+
+def _fetch_local_metadata(ffprobe_exe: str, path: Path, cancel_event=None) -> dict:
+    check_cancelled(cancel_event)
+    if not path.exists() or not path.is_file():
+        raise ValueError("Local audio file not found: %s" % path)
+    if path.stat().st_size == 0:
+        raise ValueError("Local audio file is empty: %s" % path)
+    if Path(ffprobe_exe).is_file():
+        return _probe_ffprobe(ffprobe_exe, path, cancel_event)
+    return _probe_soundfile(path)
 
 
 def download_audio(command: list[str], workdir: Path, cancel_event=None) -> Path:
@@ -295,10 +301,9 @@ def _persist_original(audio: Path, target: Path) -> str:
 
 
 def _resolve_output_dir(wid: str, args) -> tuple[str, str, Path]:
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", wid):
+    if not is_valid_stable_id(wid):
         raise ValueError("Invalid stable input id")
-    if args.audio_format not in ("mp3", "wav"):
-        raise ValueError("Unsupported audio format")
+    validate_audio_format(args.audio_format)
     model = validate_model(getattr(args, "model", DEFAULT_MODEL))
     stem = validate_stem(getattr(args, "stem", DEFAULT_STEM), model)
     out_root = Path(args.output_dir).expanduser().absolute()
@@ -343,6 +348,73 @@ def _write_manifest(meta_path: Path, *, wid: str, source: str, metadata: dict, p
     return manifest
 
 
+def _fetch_metadata(source: str, local_source: Path | None, ffprobe: str,
+                    cancel_event=None) -> tuple[dict, list[str] | None, tuple[str, str] | None]:
+    if local_source is not None:
+        metadata = _fetch_local_metadata(ffprobe, local_source, cancel_event)
+        command = None
+    else:
+        command = ytdlp_command()
+        metadata = _fetch_item_metadata(command, source, cancel_event)
+    parsed = parse_title_artist(metadata.get("title"))
+    if not parsed and metadata.get("artist") and metadata.get("title"):
+        parsed = (metadata["artist"], metadata["title"])
+    return metadata, command, parsed
+
+
+def _stage_and_publish(wid: str, args, *, source: str, local_source: Path | None,
+                       directory: Path, model: str, stem: str, ffmpeg_dir: str, ffmpeg: str,
+                       command: list[str] | None, metadata: dict, parsed,
+                       stage, progress, cancel_event) -> ItemResult:
+    with tempfile.TemporaryDirectory(prefix="jamly-") as work, tempfile.TemporaryDirectory(
+        prefix="." + args.audio_format + "-", dir=directory.parent
+    ) as staged:
+        workdir, staged_dir = Path(work), Path(staged)
+        stage("download")
+        audio = (
+            local_source if local_source is not None else download_audio(
+                build_download_cmd(command, wid, work, source, ffmpeg_dir), workdir, cancel_event
+            )
+        )
+        stage("separate")
+        stems = separate_stems(
+            str(audio), work, args.threads,
+            getattr(args, "device", "auto"), cancel_event,
+            ffmpeg_dir=ffmpeg_dir, model=model,
+            on_progress=(lambda pct: progress(wid, "separate", pct, 100)) if progress else None,
+        )
+        stage("mix")
+        destinations, meta = stem_destination_paths(
+            staged, wid, args.audio_format, parsed, stem=stem, model=model
+        )
+        audio_info = render_pair(stems, workdir, destinations, args.audio_format,
+                                 ffmpeg, cancel_event, target_stem=stem)
+        orig_target = None
+        if local_source is None:
+            orig_ext = audio.suffix.lower() or "." + args.audio_format
+            orig_target = (
+                Path(audio_directory(directory))
+                / ("%s_original%s" % (_stem_file_prefix(wid, parsed), orig_ext))
+            )
+        manifest = _write_manifest(
+            Path(meta), wid=wid, source=source, metadata=metadata, parsed=parsed,
+            model=model, stem=stem, audio_format=args.audio_format, audio_info=audio_info,
+            destinations=destinations, orig_target=orig_target,
+        )
+        stage("publish")
+        with _output_lock(directory, cancel_event):
+            publish_directory(staged_dir, directory)
+            retained = (
+                _persist_original(Path(audio), orig_target)
+                if orig_target is not None and audio is not None and Path(audio).exists()
+                else None
+            )
+        result = result_from_manifest(wid, directory, manifest, "done", local_source=local_source)
+        if retained is not None:
+            result.source_path = retained
+        return result
+
+
 def process_one(wid: str, args, progress=None, source_url=None, cancel_event=None) -> ItemResult:
     result = ItemResult(wid)
     source = source_url or wid
@@ -367,63 +439,14 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
 
         stage("metadata")
         ffmpeg_dir, ffmpeg, ffprobe = _resolve_tools(args)
-        if local_source is not None:
-            metadata = _fetch_local_metadata(ffprobe, local_source, cancel_event)
-            command = None
-        else:
-            command = ytdlp_command()
-            metadata = _fetch_item_metadata(command, source, cancel_event)
+        metadata, command, parsed = _fetch_metadata(source, local_source, ffprobe, cancel_event)
         result.title = metadata.get("title") or wid
-        parsed = parse_title_artist(metadata.get("title"))
-        if not parsed and metadata.get("artist") and metadata.get("title"):
-            parsed = (metadata["artist"], metadata["title"])
-        with tempfile.TemporaryDirectory(prefix="jamly-") as work, tempfile.TemporaryDirectory(
-            prefix="." + args.audio_format + "-", dir=directory.parent
-        ) as staged:
-            workdir, staged_dir = Path(work), Path(staged)
-            stage("download")
-            audio = (
-                local_source if local_source is not None else download_audio(
-                    build_download_cmd(command, wid, work, source, ffmpeg_dir), workdir, cancel_event
-                )
-            )
-            stage("separate")
-            stems = separate_stems(
-                str(audio), work, args.threads,
-                getattr(args, "device", "auto"), cancel_event,
-                ffmpeg_dir=ffmpeg_dir, model=model,
-                on_progress=(lambda pct: progress(wid, "separate", pct, 100)) if progress else None,
-            )
-            stage("mix")
-            destinations, meta = stem_destination_paths(
-                staged, wid, args.audio_format, parsed, stem=stem, model=model
-            )
-            audio_info = render_pair(stems, workdir, destinations, args.audio_format,
-                                     ffmpeg, cancel_event, target_stem=stem)
-            orig_target = None
-            if local_source is None:
-                orig_ext = audio.suffix.lower() or "." + args.audio_format
-                orig_target = (
-                    Path(audio_directory(directory))
-                    / ("%s_original%s" % (_stem_file_prefix(wid, parsed), orig_ext))
-                )
-            manifest = _write_manifest(
-                Path(meta), wid=wid, source=source, metadata=metadata, parsed=parsed,
-                model=model, stem=stem, audio_format=args.audio_format, audio_info=audio_info,
-                destinations=destinations, orig_target=orig_target,
-            )
-            stage("publish")
-            with _output_lock(directory, cancel_event):
-                publish_directory(staged_dir, directory)
-                retained = (
-                    _persist_original(Path(audio), orig_target)
-                    if orig_target is not None and audio is not None and Path(audio).exists()
-                    else None
-                )
-            result = result_from_manifest(wid, directory, manifest, "done", local_source=local_source)
-            if retained is not None:
-                result.source_path = retained
-            return result
+        return _stage_and_publish(
+            wid, args, source=source, local_source=local_source, directory=directory,
+            model=model, stem=stem, ffmpeg_dir=ffmpeg_dir, ffmpeg=ffmpeg, command=command,
+            metadata=metadata, parsed=parsed, stage=stage, progress=progress,
+            cancel_event=cancel_event,
+        )
     except InterruptedError as exc:
         result.status, result.error = "cancelled", str(exc)
     except Timeout:
