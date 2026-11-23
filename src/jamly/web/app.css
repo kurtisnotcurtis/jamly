@@ -161,12 +161,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: var(--accent-ink);
 }
 .stem-btn.playing { box-shadow: 0 0 0 3px rgba(240, 138, 158, 0.25); }
-.stem-btn.src-play {
-  background: rgba(240, 231, 160, 0.16);
-  border-color: rgba(240, 231, 160, 0.5);
-  color: #f7e9a8;
-}
-.stem-btn.src-play:hover:not(:disabled) { background: rgba(240, 231, 160, 0.28); }
 .icon-btn { padding: 7px; min-width: 34px; min-height: 34px; background: var(--bg-alt); }
 .toolbar-btn:hover:not(:disabled), .icon-btn:hover:not(:disabled) {
   background: var(--surface-hover);
@@ -264,17 +258,25 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .job-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .control-row { display: flex; justify-content: flex-end; gap: 6px; }
 #player {
-  position: fixed;
+  position: sticky;
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 10;
-  background: rgba(35, 23, 32, 0.96);
-  backdrop-filter: blur(10px);
+  z-index: 40;
+  background: var(--bg-alt);
   border-top: 1px solid var(--border);
-  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.28);
 }
-.player-inner { max-width: 960px; margin: auto; padding: 12px 20px; display: flex; align-items: center; gap: 16px; }
+.player-inner {
+  position: relative;
+  max-width: 960px;
+  margin: auto;
+  padding: 12px 20px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+}
 .player-info { min-width: 0; flex: 0 1 220px; }
 .player-title { margin: 0; font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .player-stem { margin: 0; font-size: 12px; color: var(--peach); }
@@ -311,21 +313,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: var(--accent-ink);
 }
 .player-toggle.playing { box-shadow: 0 0 0 3px rgba(240, 138, 158, 0.3); }
-body.has-player #player {
-  position: sticky;
-  bottom: 0;
-  z-index: 40;
-  border-top: 1px solid var(--border);
-  background: var(--bg-alt);
-  box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.28);
-}
-body.has-player #player .player-inner {
-  position: relative;
-  flex-wrap: wrap;
-  gap: 10px 16px;
-}
 body.has-player .player-speed { order: 2; }
-body.has-player .player-close { order: 3; }
+body.has-player #player-close { order: 3; }
 body.has-player main { padding-bottom: 120px; }
 details { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 18px; }
 summary { cursor: pointer; font-weight: 600; }

@@ -331,7 +331,7 @@
 
   const STEM_SHORT = { vocals: "vox", bass: "bass", guitar: "gtr", piano: "keys", other: "other" };
 
-  function stemButton(job, output, label) {
+  function stemButton(job, output, label, entries) {
     const element = document.createElement("button");
     element.type = "button";
     element.className = "stem-btn";
@@ -349,7 +349,7 @@
       span.textContent = (negative ? "no " : "") + (STEM_SHORT[base] || base);
       element.appendChild(span);
     }
-    element.addEventListener("click", () => action(element, () => playOutput(job, output, label)));
+    element.addEventListener("click", () => action(element, () => playOutput(job, output, label, entries)));
     return element;
   }
 
@@ -364,9 +364,10 @@
     group.className = "stem-group";
     const grid = document.createElement("div");
     grid.className = "stem-grid";
+    const entries = buildPlayable(job, outputs, labelFor);
     for (const output of outputs) {
       if (output.kind === "metadata") continue;
-      grid.appendChild(stemButton(job, output, labelFor(output)));
+      grid.appendChild(stemButton(job, output, labelFor(output), entries));
     }
     if (!grid.childElementCount) return null;
     group.appendChild(grid);
@@ -379,16 +380,16 @@
     return group;
   }
 
-  function buildPlayable(job) {
+  function buildPlayable(job, sourceOutputs = null, labelFor = output => outputLabel(output.kind)) {
     const entries = [];
     if (job.has_original) {
-      entries.push({ key: "/source/" + job.watch_id, label: "Original", kind: "source", name: "" });
+      entries.push({ key: "/source/" + encodeURIComponent(job.watch_id), label: "Original", kind: "source", name: "" });
     }
-    const outputs = (job.outputs || []).filter(o => o.kind !== "metadata");
+    const outputs = (sourceOutputs || job.outputs || []).filter(o => o.kind !== "metadata");
     const positives = outputs.filter(o => !o.kind.startsWith("no_"));
     const negatives = outputs.filter(o => o.kind.startsWith("no_"));
     for (const output of positives.concat(negatives)) {
-      entries.push({ key: output.url, label: outputLabel(output.kind), kind: "output", name: output.name, stemKind: output.kind });
+      entries.push({ key: output.url, label: labelFor(output), kind: "output", name: output.name, stemKind: output.kind });
     }
     return entries;
   }
@@ -443,7 +444,10 @@
     }));
   }
 
-  const player = { url: null, jobId: null, objectURL: null, controller: null };
+  const player = {
+    url: null, jobId: null, objectURL: null, controller: null,
+    entries: [], job: null, onLoadedMetadata: null,
+  };
 
   function playbackRate() {
     return Number(byId("player-speed").value) / 100;
@@ -490,7 +494,7 @@
     if (!player.url || !Array.isArray(player.entries)) return;
     for (const entry of player.entries) {
       const button = buildToggle(entry);
-      button.addEventListener("click", () => action(button, () => selectAudio(player.job, entry)));
+      button.addEventListener("click", () => action(button, () => selectAudio(player.job, entry, player.entries)));
       container.appendChild(button);
     }
   }
@@ -500,91 +504,102 @@
     cluster.className = "player-toggles";
     cluster.setAttribute("role", "group");
     cluster.setAttribute("aria-label", "Play audio sources");
-    for (const entry of buildPlayable(job)) {
+    const entries = buildPlayable(job);
+    for (const entry of entries) {
       const button = buildToggle(entry);
-      button.addEventListener("click", () => action(button, () => selectAudio(job, entry)));
+      button.addEventListener("click", () => action(button, () => selectAudio(job, entry, entries)));
       cluster.appendChild(button);
     }
     return cluster;
   }
 
-  async function selectAudio(job, entry) {
+  async function selectAudio(job, entry, entries = null) {
     const audio = byId("player-audio");
-  if (player.url === entry.key && !player.controller) {
-    if (audio.paused) {
-      return audio.play();
-    }
-    audio.pause();
-    return;
-  }
-  const sameTrack = player.jobId === job.watch_id && Boolean(player.url);
-  const resumeAt = sameTrack ? audio.currentTime : 0;
-  const resume = sameTrack ? !audio.paused : true;
-  player.controller?.abort();
-  const controller = new AbortController();
-  player.controller = controller;
-  byId("player").hidden = false;
-  document.body.classList.add("has-player");
-  byId("player-title").textContent = job.title || job.watch_id;
-  byId("player-stem").textContent = `Loading ${entry.label}...`;
-  try {
-    const response = await fetch(audioFetchUrl(entry.key), {
-      headers: { Authorization: "Bearer " + config.token },
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      let message = "";
-      try {
-        message = (await response.json()).error || "";
-      } catch (_error) {
-        // Non-JSON error bodies fall back to the HTTP status below.
+    if (player.url === entry.key && !player.controller) {
+      if (audio.paused) {
+        return audio.play();
       }
-      throw new Error(message || "Could not load this audio (HTTP " + response.status + ")");
+      audio.pause();
+      return;
     }
-    const data = await response.blob();
-    const serverType = (response.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
-    const type = serverType.startsWith("audio/") ? serverType : guessContentType(entry.name || entry.key);
-    const objectURL = URL.createObjectURL(new Blob([data], { type }));
-    const previous = player.objectURL;
-    Object.assign(player, {
-      url: entry.key, jobId: job.watch_id, objectURL, controller: null,
-      entries: buildPlayable(job), job,
-    });
-    audio.src = objectURL;
-    if (previous) URL.revokeObjectURL(previous);
-    audio.addEventListener("loadedmetadata", () => {
-      if (resumeAt && Number.isFinite(audio.duration)) {
-        audio.currentTime = Math.min(resumeAt, audio.duration);
+    const sameTrack = player.jobId === job.watch_id && Boolean(player.url);
+    const resumeAt = sameTrack ? audio.currentTime : 0;
+    const resume = sameTrack ? !audio.paused : true;
+    player.controller?.abort();
+    const controller = new AbortController();
+    player.controller = controller;
+    byId("player").hidden = false;
+    document.body.classList.add("has-player");
+    byId("player-title").textContent = job.title || job.watch_id;
+    byId("player-stem").textContent = `Loading ${entry.label}...`;
+    try {
+      const response = await fetch(audioFetchUrl(entry.key), {
+        headers: { Authorization: "Bearer " + config.token },
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        let message = "";
+        try {
+          message = (await response.json()).error || "";
+        } catch (_error) {
+          // Non-JSON error bodies fall back to the HTTP status below.
+        }
+        throw new Error(message || "Could not load this audio (HTTP " + response.status + ")");
       }
-      applyPlaybackRate();
-      if (resume) audio.play().catch(() => refreshSelectionState());
-    }, { once: true });
-    audio.load();
-    byId("player-stem").textContent = entry.label;
-    renderPlayerToggles();
-    refreshSelectionState();
-  } catch (error) {
-    if (error.name === "AbortError") return;
-    if (player.controller === controller) player.controller = null;
-    byId("player-stem").textContent = player.url ? "Could not switch audio" : "Could not load audio";
-    throw error;
+      const data = await response.blob();
+      const serverType = (response.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+      const type = serverType.startsWith("audio/") ? serverType : guessContentType(entry.name || entry.key);
+      const objectURL = URL.createObjectURL(new Blob([data], { type }));
+      const previous = player.objectURL;
+      if (player.onLoadedMetadata) {
+        audio.removeEventListener("loadedmetadata", player.onLoadedMetadata);
+        player.onLoadedMetadata = null;
+      }
+      const onLoadedMetadata = () => {
+        if (player.onLoadedMetadata === onLoadedMetadata) player.onLoadedMetadata = null;
+        if (resumeAt && Number.isFinite(audio.duration)) {
+          audio.currentTime = Math.min(resumeAt, audio.duration);
+        }
+        applyPlaybackRate();
+        if (resume) audio.play().catch(() => refreshSelectionState());
+      };
+      Object.assign(player, {
+        url: entry.key, jobId: job.watch_id, objectURL, controller: null,
+        entries: entries || buildPlayable(job), job, onLoadedMetadata,
+      });
+      audio.addEventListener("loadedmetadata", onLoadedMetadata, { once: true });
+      audio.src = objectURL;
+      if (previous) URL.revokeObjectURL(previous);
+      audio.load();
+      byId("player-stem").textContent = entry.label;
+      renderPlayerToggles();
+      refreshSelectionState();
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      if (player.controller === controller) player.controller = null;
+      byId("player-stem").textContent = player.url ? "Could not switch audio" : "Could not load audio";
+      throw error;
+    }
   }
-}
 
-  function playOutput(job, output, label) {
-    return selectAudio(job, { key: output.url, label, kind: "output", name: output.name });
+  function playOutput(job, output, label, entries = null) {
+    return selectAudio(job, { key: output.url, label, kind: "output", name: output.name, stemKind: output.kind }, entries);
   }
 
   function closePlayer() {
     const audio = byId("player-audio");
     player.controller?.abort();
+    if (player.onLoadedMetadata) {
+      audio.removeEventListener("loadedmetadata", player.onLoadedMetadata);
+      player.onLoadedMetadata = null;
+    }
     audio.pause();
     audio.removeAttribute("src");
     audio.load();
     if (player.objectURL) URL.revokeObjectURL(player.objectURL);
     Object.assign(player, {
-      url: null, jobId: null, objectURL: null, controller: null, entries: [], job: null,
+      url: null, jobId: null, objectURL: null, controller: null, entries: [], job: null, onLoadedMetadata: null,
     });
     byId("player").hidden = true;
     document.body.classList.remove("has-player");
@@ -632,6 +647,127 @@
         byId("page-next").disabled = pagination.page >= pagination.total_pages;
       }
     }
+  }
+
+  function updateLiveElapsedTimes(status) {
+    for (const el of document.querySelectorAll("#jobs .job-times[data-watch-id]")) {
+      const job = status.jobs.find(item => item.watch_id === el.dataset.watchId);
+      if (job) {
+        const isCurrent = status.current?.watch_id === job.watch_id;
+        el.textContent = formatJobTimes(job, status, isCurrent);
+      }
+    }
+  }
+
+  function renderJobRow(job, status) {
+    const row = document.createElement("li");
+    const main = document.createElement("div");
+    main.className = "job-main";
+    const info = document.createElement("div");
+    info.className = "job-info";
+    const title = document.createElement("p");
+    title.className = "job-title";
+    title.textContent = job.title || job.watch_id;
+    info.appendChild(title);
+    const isCurrent = status.current?.watch_id === job.watch_id;
+    const isCancelling = isCurrent && Boolean(status.current?.cancelling);
+    const stage = isCancelling ? "cancelling" : (isCurrent ? status.current.stage : job.status);
+    const badge = document.createElement("span");
+    const badgeTone = (job.status === "done" || job.status === "skipped")
+      ? "done"
+      : (["pending", "running"].includes(job.status)
+        ? "active"
+        : (job.status === "cancelled" ? "muted" : "error"));
+    badge.className = `status-badge ${badgeTone}`;
+    const iconName = STAGE_ICONS[stage];
+    if (iconName) badge.appendChild(statusIcon(iconName));
+    const progressText = isCurrent && !isCancelling && typeof status.current?.progress === "number"
+      ? ` ${status.current.progress}%` : "";
+    badge.appendChild(document.createTextNode((stages[stage] || stage) + progressText));
+    const detail = document.createElement("div");
+    detail.className = "job-detail";
+    const model = models.find(choice => choice.id === job.model)?.label || job.model;
+    const stemTag = job.stem && job.stem !== "drums" ? ` | ${job.stem}` : "";
+    const summary = document.createElement("span");
+    summary.textContent = `${job.audio_format.toUpperCase()} | ${model}${stemTag}`;
+    detail.append(summary, badge);
+    info.appendChild(detail);
+    const timingText = formatJobTimes(job, status, isCurrent);
+    if (timingText) {
+      const times = document.createElement("p");
+      times.className = "job-times";
+      if (isCurrent || job.status === "running") times.dataset.watchId = job.watch_id;
+      times.textContent = timingText;
+      info.appendChild(times);
+    }
+    if (job.error) {
+      const error = document.createElement("p");
+      error.className = "error";
+      error.textContent = job.error;
+      info.appendChild(error);
+    }
+    main.appendChild(info);
+
+    const actions = document.createElement("div");
+    actions.className = "job-actions";
+    const hasOutputs = Boolean(job.outputs.length || job.exports?.length);
+    if (hasOutputs) {
+      actions.appendChild(playbackCluster(job));
+      for (const exp of job.exports || []) {
+        const expModel = models.find(choice => choice.id === exp.model)?.label || exp.model;
+        const expStem = exp.stem && exp.stem !== "drums" ? ` ${exp.stem}` : "";
+        const expFormat = String(exp.audio_format || "").toUpperCase();
+        const suffix = `${expModel}${expStem} ${expFormat}`;
+        const group = stemGroup(job, exp.outputs || [],
+          output => `${outputLabel(output.kind)} (${suffix})`, suffix);
+        if (group) actions.appendChild(group);
+      }
+    }
+    const controls = document.createElement("div");
+    controls.className = "job-controls";
+    const topRow = document.createElement("div");
+    topRow.className = "control-row";
+    const bottomRow = document.createElement("div");
+    bottomRow.className = "control-row";
+    const sourceBtn = sourceControl(job);
+    if (sourceBtn) topRow.appendChild(sourceBtn);
+    if (hasOutputs) {
+      topRow.appendChild(iconButton("folder", "Show files in folder", () => post("/app/open-folder", {
+        id: job.watch_id,
+      })));
+    }
+    if (["pending", "running"].includes(job.status)) {
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "toolbar-btn cancel-btn";
+      cancelBtn.disabled = isCancelling;
+      cancelBtn.title = isCancelling ? "Cancelling processing" : "Cancel processing";
+      cancelBtn.setAttribute("aria-label", cancelBtn.title);
+      const label = document.createElement("span");
+      label.textContent = isCancelling ? "Cancelling..." : "Cancel";
+      cancelBtn.append(svgIcon("stop"), label);
+      cancelBtn.addEventListener("click", () => action(cancelBtn, async () => {
+        await jamlyClient.cancel(config, job.watch_id);
+        await refresh();
+      }));
+      bottomRow.appendChild(cancelBtn);
+    } else {
+      bottomRow.appendChild(iconButton("retry", "Retry / check files", async () => {
+        await jamlyClient.retry(config, job.watch_id, byId("replace").checked);
+        await refresh();
+      }));
+      bottomRow.appendChild(iconButton("clear", "Remove from list", async () => {
+        await post("/app/clear", { id: job.watch_id });
+        await refresh();
+      }, "danger"));
+    }
+    for (const controlRow of [topRow, bottomRow]) {
+      if (controlRow.childElementCount) controls.appendChild(controlRow);
+    }
+    if (controls.childElementCount) actions.appendChild(controls);
+    if (actions.childElementCount) main.appendChild(actions);
+    row.appendChild(main);
+    return row;
   }
 
   function render(status) {
@@ -687,124 +823,15 @@
       pagination: status.pagination,
       error: status.error,
     });
-    if (!status.current && renderKey === lastRenderKey) {
+    if (renderKey === lastRenderKey) {
+      if (status.current) updateLiveElapsedTimes(status);
       refreshSelectionState();
       return;
     }
     lastRenderKey = renderKey;
     byId("jobs").replaceChildren();
     for (const job of status.jobs) {
-      const row = document.createElement("li");
-      const main = document.createElement("div");
-      main.className = "job-main";
-      const info = document.createElement("div");
-      info.className = "job-info";
-      const title = document.createElement("p");
-      title.className = "job-title";
-      title.textContent = job.title || job.watch_id;
-      info.appendChild(title);
-      const isCurrent = status.current?.watch_id === job.watch_id;
-      const isCancelling = isCurrent && Boolean(status.current?.cancelling);
-      const stage = isCancelling ? "cancelling" : (isCurrent ? status.current.stage : job.status);
-      const badge = document.createElement("span");
-      const badgeTone = (job.status === "done" || job.status === "skipped")
-        ? "done"
-        : (["pending", "running"].includes(job.status)
-          ? "active"
-          : (job.status === "cancelled" ? "muted" : "error"));
-      badge.className = `status-badge ${badgeTone}`;
-      const iconName = STAGE_ICONS[stage];
-      if (iconName) badge.appendChild(statusIcon(iconName));
-      const progressText = isCurrent && !isCancelling && typeof status.current?.progress === "number"
-        ? ` ${status.current.progress}%` : "";
-      badge.appendChild(document.createTextNode((stages[stage] || stage) + progressText));
-      const detail = document.createElement("div");
-      detail.className = "job-detail";
-      const model = models.find(choice => choice.id === job.model)?.label || job.model;
-      const stemTag = job.stem && job.stem !== "drums" ? ` | ${job.stem}` : "";
-      const summary = document.createElement("span");
-      summary.textContent = `${job.audio_format.toUpperCase()} | ${model}${stemTag}`;
-      detail.append(summary, badge);
-      info.appendChild(detail);
-      const timingText = formatJobTimes(job, status, isCurrent);
-      if (timingText) {
-        const times = document.createElement("p");
-        times.className = "job-times";
-        times.textContent = timingText;
-        info.appendChild(times);
-      }
-      if (job.error) {
-        const error = document.createElement("p");
-        error.className = "error";
-        error.textContent = job.error;
-        info.appendChild(error);
-      }
-      main.appendChild(info);
-
-      const actions = document.createElement("div");
-      actions.className = "job-actions";
-      const hasOutputs = Boolean(job.outputs.length || job.exports?.length);
-      if (hasOutputs) {
-        actions.appendChild(playbackCluster(job));
-        for (const exp of job.exports || []) {
-          const expModel = models.find(choice => choice.id === exp.model)?.label || exp.model;
-          const expStem = exp.stem && exp.stem !== "drums" ? ` ${exp.stem}` : "";
-          const expFormat = String(exp.audio_format || "").toUpperCase();
-          const suffix = `${expModel}${expStem} ${expFormat}`;
-          const group = stemGroup(job, exp.outputs || [],
-            output => `${outputLabel(output.kind)} (${suffix})`, suffix);
-          if (group) actions.appendChild(group);
-        }
-      }
-      const controls = document.createElement("div");
-      controls.className = "job-controls";
-      const topRow = document.createElement("div");
-      topRow.className = "control-row";
-      const bottomRow = document.createElement("div");
-      bottomRow.className = "control-row";
-      const sourceBtn = sourceControl(job);
-      if (sourceBtn) topRow.appendChild(sourceBtn);
-      if (hasOutputs) {
-        topRow.appendChild(iconButton("folder", "Show files in folder", () => post("/app/open-folder", {
-          id: job.watch_id,
-        })));
-      }
-      if (["pending", "running"].includes(job.status)) {
-        const cancelBtn = document.createElement("button");
-        cancelBtn.type = "button";
-        cancelBtn.className = "toolbar-btn cancel-btn";
-        cancelBtn.disabled = isCancelling;
-        cancelBtn.title = isCancelling ? "Cancelling processing" : "Cancel processing";
-        cancelBtn.setAttribute("aria-label", cancelBtn.title);
-        const label = document.createElement("span");
-        label.textContent = isCancelling ? "Cancelling..." : "Cancel";
-        cancelBtn.append(svgIcon("stop"), label);
-        cancelBtn.addEventListener("click", () => action(cancelBtn, async () => {
-          await jamlyClient.cancel(config, job.watch_id);
-          await refresh();
-        }));
-        bottomRow.appendChild(cancelBtn);
-      } else {
-        bottomRow.appendChild(iconButton("retry", "Retry / check files", async () => {
-          await jamlyClient.retry(config, job.watch_id, byId("replace").checked);
-          await refresh();
-        }));
-        bottomRow.appendChild(iconButton("clear", "Remove from list", async () => {
-          await post("/app/clear", { id: job.watch_id });
-          await refresh();
-        }, "danger"));
-      }
-      for (const controlRow of [topRow, bottomRow]) {
-        if (controlRow.childElementCount) controls.appendChild(controlRow);
-      }
-      if (controls.childElementCount) {
-        actions.appendChild(controls);
-      }
-      if (actions.childElementCount) {
-        main.appendChild(actions);
-      }
-      row.appendChild(main);
-      byId("jobs").appendChild(row);
+      byId("jobs").appendChild(renderJobRow(job, status));
     }
     refreshSelectionState();
     if (status.error) showError(new Error(status.error));
