@@ -35,13 +35,13 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.11.7"
           python-version: "3.12"
           enable-cache: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         if: runner.os == 'Linux'
         with:
           node-version: "24"
@@ -134,7 +134,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Verify release tag matches version metadata
         run: python3 tools/version.py --check --tag "${GITHUB_REF_NAME}"
       - name: Download companion artifacts
@@ -337,5 +337,11 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $ver = $env:VERSION.TrimStart('v')
-          Invoke-WebRequest -Uri "https://aka.ms/wingetcreate/latest" -OutFile "wingetcreate.exe"
+          $wingetcreateUrl = "https://github.com/microsoft/winget-create/releases/download/v1.12.13.0/wingetcreate.exe"
+          $expectedSha256 = "24042bd37915805615e6cf969ac57c6439124c3fe85823327f5f3fb24bd9ffea"
+          Invoke-WebRequest -Uri $wingetcreateUrl -OutFile "wingetcreate.exe"
+          $actualSha256 = (Get-FileHash -Path "wingetcreate.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "wingetcreate.exe SHA-256 mismatch: expected $expectedSha256, got $actualSha256"
+          }
           .\wingetcreate.exe submit ".\manifests\winget\kurtisnotcurtis.Jamly\$ver\"

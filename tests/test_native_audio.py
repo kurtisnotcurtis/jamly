@@ -194,6 +194,9 @@ class VersionToolTests(unittest.TestCase):
             updated = version_tool.set_version("0.2.0", root=temp_root)
             self.assertEqual(updated, "0.2.0")
             self.assertEqual(version_tool.check_versions(root=temp_root, tag="v0.2.0"), "0.2.0")
+            spec_text = (temp_root / "tools" / "Jamly.spec").read_text(encoding="utf-8")
+            self.assertIn('"CFBundleShortVersionString": __version__', spec_text)
+            self.assertIn('"CFBundleVersion": __version__', spec_text)
             (temp_root / "pyproject.toml").write_text('version = "0.2.1"\n', encoding="utf-8")
             with self.assertRaises(ValueError):
                 version_tool.check_versions(root=temp_root)

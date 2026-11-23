@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Run the whole Jamly CI suite locally before you push or release.
+"""Run the Jamly CI suite locally (and from GitHub Actions) before pushing or releasing.
 
-This reproduces ``.github/workflows/ci.yml`` step-for-step so a green run here
-means a green GitHub Actions job. It is stdlib-only; it shells out to the same
-commands CI runs and fails fast on the first stage that errors.
+This is the single source of truth for the CI verification stages. It is stdlib-only,
+shells out to the project tools, and fails fast on the first stage that errors.
 
 Usage::
 
@@ -14,22 +13,22 @@ Usage::
 
 The two heaviest real-model stages (audio pipeline, Chrome smoke) are opt-in so a
 quick local gate stays fast; the pre-push hook enables the audio pipeline for you.
-Requires Python 3.11–3.12, [uv](https://docs.astral.sh/uv/) when building a wheel,
+Requires Python 3.11-3.12, [uv](https://docs.astral.sh/uv/) when building a wheel,
 Node 24+, and `ffmpeg`/`ffprobe`.
 """
 from __future__ import annotations
 
 import argparse
+import os
+from pathlib import Path
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Ordered stages mirroring .github/workflows/ci.yml. Each entry is a list of argv.
 NODE_TESTS = [
     "browser/extension/jamly_client_test.js",
     "browser/extension/jamly_extension_bg_test.js",
@@ -42,7 +41,7 @@ def _have(name: str) -> bool:
 
 
 def _base_interpreter(use_uv: bool) -> list[str]:
-    """Interpreter argv for module/file invocations (pytest, unittest, ruff, scripts)."""
+    """Interpreter argv for module/file invocations (pytest, ruff, scripts)."""
     if use_uv and _have("uv"):
         return ["uv", "run", "--locked", "python"]
     return [sys.executable]
@@ -70,7 +69,7 @@ def run(argv: list[str], label: str, check: bool = True) -> bool:
 
 
 def _wheel_smoke(use_uv: bool) -> bool:
-    """Fresh-install the built wheel and exercise it, matching CI's job."""
+    """Fresh-install the built wheel and exercise it."""
     if not (use_uv and _have("uv")):
         print("\n" + "=" * 72)
         print("==> Wheel build + fresh-install smoke\n    [skip] uv not available")
@@ -81,7 +80,7 @@ def _wheel_smoke(use_uv: bool) -> bool:
     if not whl:
         print("    [fail] no wheel produced by `uv build`")
         return False
-    # Match CI: --no-sync so uv doesn't re-resolve and overwrite the just-installed wheel.
+    # --no-sync so uv doesn't re-resolve and overwrite the just-installed wheel.
     runner = ["uv", "run", "--no-sync"]
     installed = run(
         ["uv", "pip", "install", "--no-deps", "--force-reinstall", str(whl[-1])],
@@ -89,16 +88,22 @@ def _wheel_smoke(use_uv: bool) -> bool:
     )
     if not installed:
         return False
-    state_dir = tempfile.mkdtemp(prefix="jamly-devcheck-")
-    checks = [
-        ["jamly-doctor"],
-        ["jamly-service", "browser", "--state-dir", state_dir],
-        ["python", "-c", "import jamly; assert 'site-packages' in jamly.__file__"],
-    ]
-    for check in checks:
-        if not run(runner + check, "Exercise installed package"):
-            return False
+    with tempfile.TemporaryDirectory(prefix="jamly-devcheck-") as state_dir:
+        checks = [
+            ["jamly-doctor"],
+            ["jamly-service", "browser", "--state-dir", state_dir],
+            ["python", "-c", "import jamly; assert 'site-packages' in jamly.__file__"],
+        ]
+        for check in checks:
+            if not run(runner + check, "Exercise installed package"):
+                return False
     return True
+
+
+def _fail() -> int:
+    print("\n" + "=" * 72)
+    print("Stage failed. Fix and re-run before pushing.")
+    return 1
 
 
 def main(argv=None) -> int:
@@ -123,21 +128,26 @@ def main(argv=None) -> int:
     use_uv = _have("uv")
     base = _base_interpreter(use_uv)
     runner = _runner_cmd(use_uv)
-    ok = True
 
-    ok &= run(base + ["tools/version.py", "--check"], "Lockstep version metadata")
-    ok &= run(runner + ["jamly-doctor"], "jamly-doctor health check")
-    ok &= run(base + ["-m", "pytest", "-q"], "pytest unit suite")
-    ok &= run(base + ["-m", "unittest", "discover", "-s", "tests"], "unittest suite")
-    ok &= run(base + ["-m", "ruff", "check", "."], "ruff lint")
+    stages = [
+        (base + ["tools/version.py", "--check"], "Lockstep version metadata"),
+        (runner + ["jamly-doctor"], "jamly-doctor health check"),
+        (base + ["-m", "pytest", "-q"], "pytest unit suite"),
+        (base + ["-m", "ruff", "check", "."], "ruff lint"),
+    ]
+    for cmd, label in stages:
+        if not run(cmd, label):
+            return _fail()
+
     node_argv = ["node", "--test"] + [str(ROOT / p) for p in NODE_TESTS]
     if _have("node"):
-        ok &= run(node_argv, "Node extension tests")
+        if not run(node_argv, "Node extension tests"):
+            return _fail()
     else:
         print("\n[skip] Node tests (node not on PATH)")
 
     if not args.no_build and not _wheel_smoke(use_uv):
-        ok = False
+        return _fail()
 
     if args.integration:
         have_audio = True
@@ -147,33 +157,27 @@ def main(argv=None) -> int:
             print("\n[skip] integration pipeline (soundfile unavailable: %s)" % exc)
             have_audio = False
         if have_audio:
-            ok &= run(
-                base + ["-m", "unittest", "discover", "-s", "tests", "-p",
-                        "integration_pipeline.py"],
+            integration_base = ["uv", "run", "--no-sync", "python"] if (use_uv and not args.no_build) else base
+            if not run(
+                integration_base + ["-m", "unittest", "discover", "-s", "tests", "-p",
+                                    "integration_pipeline.py"],
                 "Real-model audio pipeline (generated WAV)",
-            )
+            ):
+                return _fail()
 
     if args.browser:
         if not _have("node"):
             print("\n[skip] browser smoke (node not on PATH)")
-        elif not (_have("chrome") or _have("chromium") or environ_chrome()):
+        elif not (_have("chrome") or _have("chromium") or bool(os.environ.get("CHROME_BIN"))):
             print("\n[skip] browser smoke (no Chrome binary; set CHROME_BIN)")
         else:
-            ok &= run(["node", str(ROOT / "tools" / "browser_smoke.mjs")],
-                      "Headless-Chrome companion workflow")
+            if not run(["node", str(ROOT / "tools" / "browser_smoke.mjs")],
+                       "Headless-Chrome companion workflow"):
+                return _fail()
 
     print("\n" + "=" * 72)
-    if ok:
-        print("All selected stages passed.")
-        return 0
-    print("One or more stages failed. Fix and re-run before pushing.")
-    return 1
-
-
-def environ_chrome() -> bool:
-    import os
-
-    return bool(os.environ.get("CHROME_BIN"))
+    print("All selected stages passed.")
+    return 0
 
 
 if __name__ == "__main__":

@@ -55,10 +55,8 @@ def read_versions(root: Path = ROOT) -> dict[str, str]:
         raise ValueError("Missing @version in browser/userscripts/jamly.user.js")
 
     spec_text = (root / "tools" / "Jamly.spec").read_text(encoding="utf-8")
-    short_match = re.search(r'"CFBundleShortVersionString":\s*"([^"]+)"', spec_text)
-    bundle_match = re.search(r'"CFBundleVersion":\s*"([^"]+)"', spec_text)
-    if not short_match or not bundle_match:
-        raise ValueError("Missing CFBundle version strings in tools/Jamly.spec")
+    if '"CFBundleShortVersionString": __version__' not in spec_text or '"CFBundleVersion": __version__' not in spec_text:
+        raise ValueError("tools/Jamly.spec must derive CFBundle versions from jamly.__version__")
 
     return {
         "src/jamly/__init__.py": init_match.group(1),
@@ -66,8 +64,6 @@ def read_versions(root: Path = ROOT) -> dict[str, str]:
         "uv.lock": uv_match.group(1),
         "browser/extension/manifest.json": manifest_version,
         "browser/userscripts/jamly.user.js": userscript_match.group(1),
-        "tools/Jamly.spec#CFBundleShortVersionString": short_match.group(1),
-        "tools/Jamly.spec#CFBundleVersion": bundle_match.group(1),
     }
 
 
@@ -138,22 +134,6 @@ def set_version(new_version: str, root: Path = ROOT) -> str:
         flags=re.MULTILINE,
     )
     userscript_path.write_text(userscript_text, encoding="utf-8")
-
-    spec_path = root / "tools" / "Jamly.spec"
-    spec_text = spec_path.read_text(encoding="utf-8")
-    spec_text = re.sub(
-        r'("CFBundleShortVersionString":\s*)"[^"]+"',
-        r'\g<1>"' + version + '"',
-        spec_text,
-        count=1,
-    )
-    spec_text = re.sub(
-        r'("CFBundleVersion":\s*)"[^"]+"',
-        r'\g<1>"' + version + '"',
-        spec_text,
-        count=1,
-    )
-    spec_path.write_text(spec_text, encoding="utf-8")
 
     return check_versions(root)
 

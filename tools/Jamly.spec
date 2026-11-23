@@ -6,6 +6,9 @@ import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 root = Path(SPECPATH).parent
+sys.path.insert(0, str(root / "src"))
+from jamly import __version__  # noqa: E402
+
 staging = root / "build" / "desktop-staging"
 native = root / "build" / "native-audio" / "install" / "bin"
 suffix = ".exe" if sys.platform == "win32" else ""
@@ -71,8 +74,8 @@ if sys.platform == "darwin":
     app = BUNDLE(
         collection, name="Jamly.app", icon=mac_icon, bundle_identifier="com.jamly.companion",
         info_plist={
-            "CFBundleShortVersionString": "0.2.5",
-            "CFBundleVersion": "0.2.5",
+            "CFBundleShortVersionString": __version__,
+            "CFBundleVersion": __version__,
             "LSMinimumSystemVersion": "13.0",
             "LSUIElement": True,
             "NSHighResolutionCapable": True,
