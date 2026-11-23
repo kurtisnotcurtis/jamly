@@ -32,6 +32,15 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def sha256_file(path: Path) -> str:
+    """Return the lowercase SHA-256 hex digest of a file streamed in 1 MiB chunks."""
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for block in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def render_template_files(
     templates: list[Path],
     output_dir: Path,

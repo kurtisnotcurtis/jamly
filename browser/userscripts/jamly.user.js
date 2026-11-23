@@ -35,13 +35,12 @@
 
   function request(path, body) {
     return new Promise((resolve, reject) => {
+      const headers = { Authorization: "Bearer " + GM_getValue("token", "") };
+      if (body !== undefined) headers["Content-Type"] = "application/json";
       GM_xmlhttpRequest({
         url: "http://127.0.0.1:8765" + path,
         method: body === undefined ? "GET" : "POST",
-        headers: {
-          Authorization: "Bearer " + GM_getValue("token", ""),
-          "Content-Type": "application/json",
-        },
+        headers,
         data: body === undefined ? undefined : JSON.stringify(body),
         timeout: 10000,
         onload: response => {

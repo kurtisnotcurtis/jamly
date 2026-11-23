@@ -60,18 +60,20 @@
   }
 
   for (const button of document.querySelectorAll(".copy-btn[data-copy]")) {
+    let resetTimer;
     button.addEventListener("click", async () => {
       const target = document.getElementById(button.dataset.copy);
       if (!target || !navigator.clipboard) return;
-      const previous = button.textContent;
+      if (!button.dataset.label) button.dataset.label = button.textContent;
+      clearTimeout(resetTimer);
       try {
         await navigator.clipboard.writeText(target.textContent);
         button.textContent = "Copied";
       } catch (_error) {
         button.textContent = "Copy failed";
       }
-      setTimeout(() => {
-        button.textContent = previous;
+      resetTimer = setTimeout(() => {
+        button.textContent = button.dataset.label;
       }, 1500);
     });
   }

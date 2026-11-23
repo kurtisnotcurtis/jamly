@@ -493,6 +493,14 @@ class ReproDistAndDevCheckTests(unittest.TestCase):
             current.write_bytes(b"current")
             self.assertEqual(dev_check._current_wheel(dist), current)
 
+    def test_package_render_sha256_file_streams_chunks(self):
+        package_render = _load_tool("package_render.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            sample = Path(tmp) / "archive.bin"
+            payload = b"jamly-streamed-digest" * 100
+            sample.write_bytes(payload)
+            self.assertEqual(package_render.sha256_file(sample), hashlib.sha256(payload).hexdigest())
+
 
 if __name__ == "__main__":
     unittest.main()

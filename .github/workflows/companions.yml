@@ -147,19 +147,16 @@ jobs:
         run: |
           VERSION="$(python3 tools/version.py --check --tag "${GITHUB_REF_NAME}")"
           python3 - "$VERSION" <<'PY'
-          import hashlib
           from pathlib import Path
           import shutil
           import sys
           import zipfile
 
           sys.path.insert(0, "tools")
+          from package_render import sha256_file
           from render_aur import render_aur_package
           from render_homebrew import render_homebrew_cask
           from render_winget import render_winget_manifests
-
-          def sha256_file(path: Path) -> str:
-              return hashlib.sha256(path.read_bytes()).hexdigest()
 
           version = sys.argv[1]
           release_dir = Path("dist/release")
