@@ -64,17 +64,14 @@
   }
 
   function modelHelp() {
-    const modelDesc = models.find(model => model.id === byId("model").value)?.description || "";
-    const stemValue = byId("stem")?.value || "drums";
-    const stemChoice = stems.find(stem => stem.id === stemValue);
-    const stemDesc = stemChoice?.description ? " " + stemChoice.description : "";
-    byId("model-help").textContent = modelDesc + stemDesc;
-    byId("model").title = modelDesc;
-    if (byId("stem") && stemChoice?.description) {
-      byId("stem").title = stemChoice.description;
+    const info = jamlyClient.describeModelStem(models, stems, byId("model").value, byId("stem")?.value);
+    byId("model-help").textContent = info.helpText;
+    byId("model").title = info.modelDescription;
+    if (byId("stem") && info.stemDescription) {
+      byId("stem").title = info.stemDescription;
     }
     if (byId("submit")) {
-      byId("submit").textContent = stemValue === "all" ? "Split all stems" : "Split " + stemValue;
+      byId("submit").textContent = info.submitLabel;
     }
   }
 
@@ -382,21 +379,9 @@
     return group;
   }
 
-  function localSource(job) {
-    const source = job.source_url;
-    if (!source || source === job.watch_id) return null;
-    try {
-      const parsed = new URL(source);
-      if (parsed.protocol === "http:" || parsed.protocol === "https:") return null;
-    } catch (_error) {
-      // Local filesystem paths are not valid URLs; treat as local.
-    }
-    return true;
-  }
-
   function buildPlayable(job) {
     const entries = [];
-    if (localSource(job)) {
+    if (job.has_original) {
       entries.push({ key: "/source/" + job.watch_id, label: "Original", kind: "source", name: "" });
     }
     const outputs = (job.outputs || []).filter(o => o.kind !== "metadata");
@@ -408,8 +393,8 @@
     return entries;
   }
 
-    function guessContentType(url) {
-    const match = /\.(\w+)$/i.exec(typeof url === "string" ? url : "");
+  function guessContentType(name) {
+    const match = /\.(\w+)$/i.exec(typeof name === "string" ? name : "");
     switch ((match && match[1].toLowerCase()) || "") {
       case "wav": return "audio/wav";
       case "mp3": return "audio/mpeg";
@@ -505,7 +490,7 @@
     if (!player.url || !Array.isArray(player.entries)) return;
     for (const entry of player.entries) {
       const button = buildToggle(entry);
-      button.addEventListener("click", () => selectAudio(player.job, entry));
+      button.addEventListener("click", () => action(button, () => selectAudio(player.job, entry)));
       container.appendChild(button);
     }
   }
@@ -558,8 +543,8 @@
       throw new Error(message || "Could not load this audio (HTTP " + response.status + ")");
     }
     const data = await response.blob();
-    const type = entry.kind === "source" ? guessContentType(entry.key)
-      : (/\.wav$/i.test(entry.name || "") ? "audio/wav" : "audio/mpeg");
+    const serverType = (response.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+    const type = serverType.startsWith("audio/") ? serverType : guessContentType(entry.name || entry.key);
     const objectURL = URL.createObjectURL(new Blob([data], { type }));
     const previous = player.objectURL;
     Object.assign(player, {
@@ -587,9 +572,9 @@
   }
 }
 
-function playOutput(job, output, label) {
-  selectAudio(job, { key: output.url, label, kind: "output", name: output.name });
-}
+  function playOutput(job, output, label) {
+    return selectAudio(job, { key: output.url, label, kind: "output", name: output.name });
+  }
 
   function closePlayer() {
     const audio = byId("player-audio");
@@ -856,18 +841,14 @@ function playOutput(job, output, label) {
   byId("model").addEventListener("change", () => {
     const stemSelect = byId("stem");
     if (stemSelect) {
-      const stemChoice = stems.find(item => item.id === stemSelect.value);
-      if (stemChoice?.models && !stemChoice.models.includes(byId("model").value)) {
-        stemSelect.value = "drums";
-      }
+      const synced = jamlyClient.reconcileModelStem(stems, byId("model").value, stemSelect.value, "model");
+      stemSelect.value = synced.stem;
     }
     modelHelp();
   });
   byId("stem")?.addEventListener("change", () => {
-    const stemChoice = stems.find(item => item.id === byId("stem").value);
-    if (stemChoice?.models && !stemChoice.models.includes(byId("model").value)) {
-      byId("model").value = stemChoice.models[0];
-    }
+    const synced = jamlyClient.reconcileModelStem(stems, byId("model").value, byId("stem").value, "stem");
+    byId("model").value = synced.model;
     modelHelp();
   });
   byId("pair-form").addEventListener("submit", async event => {
@@ -907,18 +888,15 @@ function playOutput(job, output, label) {
     });
   });
   byId("open-output").addEventListener("click", () => action(byId("open-output"), async () => {
-    await post("/settings", settings());
     await post("/app/open-folder");
   }));
   enhanceToolbarButton("open-exports-folder", "folder");
   enhanceToolbarButton("rescan-exports", "rescan");
   enhanceToolbarButton("clear-exports", "clear");
   byId("open-exports-folder")?.addEventListener("click", () => action(byId("open-exports-folder"), async () => {
-    await post("/settings", settings());
     await post("/app/open-folder");
   }));
   byId("rescan-exports")?.addEventListener("click", () => action(byId("rescan-exports"), async () => {
-    await post("/settings", settings());
     const result = await post("/app/rescan");
     await refresh();
     byId("connection").textContent = result.restored
