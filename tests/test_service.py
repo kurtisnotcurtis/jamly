@@ -79,6 +79,11 @@ class SharedConfigTests(unittest.TestCase):
             self.assertEqual(config.runtime_paths(args), (Path(root), queue))
             args.state_dir = str(Path(root) / "separate-state")
             self.assertEqual(config.runtime_paths(args), (Path(args.state_dir), queue))
+            same_queue = Path(root) / "." / "custom.json"
+            self.assertEqual(
+                config.instance_path(Path(root), queue),
+                config.instance_path(Path(root), same_queue),
+            )
 
     def test_config_uses_absolute_paths_and_cli_overrides(self):
         with tempfile.TemporaryDirectory() as root:

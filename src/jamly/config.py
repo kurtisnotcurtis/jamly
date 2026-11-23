@@ -19,6 +19,8 @@ from platformdirs import user_data_path
 from . import __version__
 from .models import DEFAULT_MODEL, DEFAULT_STEM, MODELS, STEM_MODES, validate_model, validate_stem
 
+API_VERSION = 3
+
 
 def state_directory(value: str | None = None) -> Path:
     return Path(
@@ -98,13 +100,17 @@ def token_path(state_dir: Path) -> Path:
     return state_dir / "server-token"
 
 
+def _normalized_queue_id(queue: Path) -> str:
+    return os.path.normcase(str(queue.resolve()))
+
+
 def instance_path(state: Path, queue: Path) -> Path:
-    identity = hashlib.sha256(str(queue).encode()).hexdigest()[:16]
+    identity = hashlib.sha256(_normalized_queue_id(queue).encode()).hexdigest()[:16]
     return state / ("server-" + identity + ".json")
 
 
 def pairing_proof(token: str, nonce: str, url: str, queue: Path) -> str:
-    context = json.dumps(["jamly-backend-v1", nonce, url, os.path.normcase(str(queue.resolve()))],
+    context = json.dumps(["jamly-backend-v1", nonce, url, _normalized_queue_id(queue)],
                          separators=(",", ":")).encode()
     return hmac.new(token.encode(), context, hashlib.sha256).hexdigest()
 

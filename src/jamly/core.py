@@ -49,7 +49,8 @@ def check_cancelled(cancel_event: threading.Event | None) -> None:
 
 def _terminate(process: subprocess.Popen) -> None:
     if PLATFORM_WINDOWS:
-        taskkill = str(Path(os.environ["SystemRoot"]) / "System32" / "taskkill.exe")
+        system_root = os.environ.get("SystemRoot") or r"C:\Windows"
+        taskkill = str(Path(system_root) / "System32" / "taskkill.exe")
         subprocess.run([taskkill, "/PID", str(process.pid), "/T", "/F"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     else:
@@ -68,6 +69,48 @@ def _terminate(process: subprocess.Popen) -> None:
             except ProcessLookupError:
                 pass
         process.wait()
+
+
+def _start_stream_reader(process: subprocess.Popen, tail: deque, errors: list, on_line) -> threading.Thread:
+    def pump():
+        try:
+            for line in process.stdout:
+                tail.append(line)
+                if not line.startswith("JAMLY_PROGRESS:"):
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                if on_line is not None:
+                    on_line(line)
+        except Exception as exc:
+            errors.append(exc)
+
+    reader = threading.Thread(target=pump, daemon=True)
+    reader.start()
+    return reader
+
+
+def _wait_for_process(process: subprocess.Popen, cmd0: str, *, stream: bool, reader, tail: deque,
+                      errors: list, cancel_event, timeout: float | None) -> tuple[str, str]:
+    start = time.monotonic()
+    while True:
+        check_cancelled(cancel_event)
+        if timeout is not None and time.monotonic() - start > timeout:
+            raise TimeoutError("Command exceeded %.0f seconds: %s" % (timeout, cmd0))
+        if errors:
+            raise errors[0]
+        try:
+            if not stream:
+                stdout, stderr = process.communicate(timeout=0.1)
+                return stdout or "", stderr or ""
+            process.wait(timeout=0.1)
+            reader.join(timeout=3)
+            if reader.is_alive():
+                raise RuntimeError("Command output did not close")
+            if errors:
+                raise errors[0]
+            return "", "".join(tail) if process.returncode else ""
+        except subprocess.TimeoutExpired:
+            continue
 
 
 def run(args: Sequence[str], check: bool = False, capture: bool = True,
@@ -89,48 +132,15 @@ def run(args: Sequence[str], check: bool = False, capture: bool = True,
         )
     except FileNotFoundError:
         return RunResult(cmd, -1, "", "NOT FOUND: %s" % cmd[0])
-    start = time.monotonic()
-    errors = []
-    tail = deque(maxlen=30)
-    reader = None
-
-    def pump():
-        try:
-            for line in process.stdout:
-                tail.append(line)
-                if not line.startswith("JAMLY_PROGRESS:"):
-                    sys.stdout.write(line)
-                    sys.stdout.flush()
-                if on_line is not None:
-                    on_line(line)
-        except Exception as exc:
-            errors.append(exc)
-
+    errors: list[Exception] = []
+    tail: deque[str] = deque(maxlen=30)
+    reader = _start_stream_reader(process, tail, errors, on_line) if stream else None
     try:
-        if stream:
-            reader = threading.Thread(target=pump, daemon=True)
-            reader.start()
-        while True:
-            check_cancelled(cancel_event)
-            if timeout is not None and time.monotonic() - start > timeout:
-                raise TimeoutError("Command exceeded %.0f seconds: %s" % (timeout, cmd[0]))
-            if errors:
-                raise errors[0]
-            try:
-                if stream:
-                    process.wait(timeout=0.1)
-                    reader.join(timeout=3)
-                    if reader.is_alive():
-                        raise RuntimeError("Command output did not close")
-                    if errors:
-                        raise errors[0]
-                    stdout, stderr = "", "".join(tail) if process.returncode else ""
-                else:
-                    stdout, stderr = process.communicate(timeout=0.1)
-                break
-            except subprocess.TimeoutExpired:
-                continue
-        result = RunResult(cmd, process.returncode, stdout or "", stderr or "")
+        stdout, stderr = _wait_for_process(
+            process, cmd[0], stream=stream, reader=reader, tail=tail,
+            errors=errors, cancel_event=cancel_event, timeout=timeout,
+        )
+        result = RunResult(cmd, process.returncode, stdout, stderr)
         if not result.ok:
             check_cancelled(cancel_event)
         if check and not result.ok:

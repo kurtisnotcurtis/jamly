@@ -27,31 +27,38 @@ def bundled_binary(name: str) -> Path | None:
     return root / "bin" / (name + (".exe" if os.name == "nt" else "")) if root else None
 
 
-def browser_assets(kind: str) -> Path:
+def share_path(*parts: str, checkout_relative: tuple[str, ...] | None = None) -> Path | None:
+    """Locate a packaged file or directory under share/jamly/ across frozen, checkout, and installed layouts."""
     root = bundle_root()
     if root is not None:
-        source = root / "share" / "jamly" / "browser" / kind
-        if source.is_dir():
-            return source
-        raise FileNotFoundError("Browser assets are missing; reinstall Jamly")
+        candidate = root.joinpath("share", "jamly", *parts)
+        return candidate if candidate.exists() else None
     here = Path(__file__).resolve()
-    candidates = [here.parents[2] / "browser" / kind]
+    candidates: list[Path] = []
+    if checkout_relative is not None and len(here.parents) > 2:
+        candidates.append(here.parents[2].joinpath(*checkout_relative))
     prefixes = [Path(sys.prefix)]
     user_base = getattr(site, "USER_BASE", None)
     if user_base:
         prefixes.append(Path(user_base))
-    # Also check ancestor prefixes of this installed module (covers --user and custom --target prefixes).
     prefixes.extend(here.parents)
     seen = set()
     for prefix in prefixes:
-        candidate = prefix / "share" / "jamly" / "browser" / kind
+        candidate = prefix.joinpath("share", "jamly", *parts)
         if candidate not in seen:
             seen.add(candidate)
             candidates.append(candidate)
-    for source in candidates:
-        if source.is_dir():
-            return source
-    raise FileNotFoundError("Browser assets are missing; reinstall Jamly")
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def browser_assets(kind: str) -> Path:
+    source = share_path("browser", kind, checkout_relative=("browser", kind))
+    if source is None or not source.is_dir():
+        raise FileNotFoundError("Browser assets are missing; reinstall Jamly")
+    return source
 
 
 def open_directory(path: Path) -> None:

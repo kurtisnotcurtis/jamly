@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from jamly import companion, companion_ui, runtime
+from jamly import companion, companion_ui, runtime, tray
 
 
 class CompanionLauncherTests(unittest.TestCase):
@@ -85,8 +85,11 @@ class CompanionLauncherTests(unittest.TestCase):
             fake_runtime.write_text("", encoding="utf-8")
             user_assets = base / "user-base" / "share" / "jamly" / "browser" / "extension"
             user_assets.mkdir(parents=True)
+            user_icon = base / "user-base" / "share" / "jamly" / "jamly.ico"
+            user_icon.write_bytes(b"ico")
             with patch.object(runtime, "bundle_root", return_value=None), \
                     patch.object(runtime, "__file__", str(fake_runtime)), \
                     patch.object(runtime.sys, "prefix", str(base / "empty-prefix")), \
                     patch.object(runtime.site, "USER_BASE", str(base / "user-base")):
                 self.assertEqual(runtime.browser_assets("extension"), user_assets)
+                self.assertEqual(tray.find_icon_path(), user_icon)

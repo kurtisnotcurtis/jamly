@@ -13,7 +13,10 @@ import sys
 import xml.etree.ElementTree as ET
 
 from .bootstrap import summarize, detect_ffmpeg, check_runtime
-from .config import add_pipeline_arguments, pairing_token, pipeline_options, runtime_paths, token_command
+from .config import (
+    add_pipeline_arguments, pairing_token, pipeline_options, runtime_paths, token_command,
+    write_private_json,
+)
 from .runtime import browser_assets, module_command
 
 LABEL = "com.jamly.backend"
@@ -172,7 +175,7 @@ def main(argv=None) -> int:
                 return 0
             state.mkdir(parents=True, exist_ok=True)
             pairing_token(state)
-            settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+            write_private_json(settings_path, settings)
             definition.parent.mkdir(parents=True, exist_ok=True)
             definition.write_bytes(content)
         elif args.dry_run:

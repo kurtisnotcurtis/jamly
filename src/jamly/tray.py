@@ -7,7 +7,7 @@ import sys
 import threading
 import webbrowser
 
-from .runtime import bundle_root
+from .runtime import share_path
 
 _STAGES = {
     "metadata": "Checking media",
@@ -20,17 +20,9 @@ _STAGES = {
 
 
 def find_icon_path() -> Path | None:
-    """Return the first existing jamly.ico across frozen, wheel, and checkout layouts."""
-    candidates: list[Path] = []
-    root = bundle_root()
-    if root is not None:
-        candidates.append(root / "share" / "jamly" / "jamly.ico")
-    candidates.append(Path(sys.prefix) / "share" / "jamly" / "jamly.ico")
-    candidates.append(Path(__file__).resolve().parents[2] / "tools" / "jamly.ico")
-    for path in candidates:
-        if path.is_file():
-            return path
-    return None
+    """Return the first existing jamly.ico across frozen, wheel, --user, and checkout layouts."""
+    path = share_path("jamly.ico", checkout_relative=("tools", "jamly.ico"))
+    return path if path is not None and path.is_file() else None
 
 
 def tray_status(app) -> tuple[str, str]:

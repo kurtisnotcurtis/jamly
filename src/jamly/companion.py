@@ -21,8 +21,8 @@ from filelock import FileLock
 
 from .bootstrap import check_runtime, detect_ffmpeg, summarize
 from .config import (
-    instance_path, pairing_token, pairing_proof, parse_configured_args, pipeline_options, runtime_paths,
-    state_directory,
+    API_VERSION, instance_path, pairing_proof, pairing_token, parse_configured_args,
+    pipeline_options, runtime_paths, state_directory,
 )
 from .runtime import module_command
 from .server import _is_loopback_host, build_parser
@@ -80,7 +80,7 @@ def _connect(url: str, token: str, queue: Path) -> bool:
         if isinstance(exc.reason, (ConnectionRefusedError, TimeoutError)):
             return False
         raise
-    if handshake.get("api_version") != 3:
+    if handshake.get("api_version") != API_VERSION:
         raise RuntimeError("Update and restart the backend before opening this companion")
     return True
 
