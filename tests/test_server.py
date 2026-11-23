@@ -426,6 +426,24 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(seen, [self.wid, self.wid])
         self.assertEqual(state["pending"], 0)
 
+    def test_user_cancel_marks_cancelled_even_if_worker_returns_error(self):
+        started = threading.Event()
+
+        def process(wid, _args, *, cancel_event, **_kwargs):
+            started.set()
+            cancel_event.wait(timeout=5)
+            return ItemResult(wid, status="error", error="ffmpeg exited non-zero")
+
+        self.start(process)
+        self.request("POST", "/add", {"inputs": [self.source]})
+        self.assertTrue(started.wait(3))
+        code, payload, _ = self.request("POST", "/cancel/" + self.wid, {})
+        self.assertEqual(code, 202)
+        self.assertTrue(payload["cancelled"])
+        state = self.wait_for(lambda s: s["current"] is None and s["jobs"][0]["status"] == "cancelled")
+        self.assertEqual(state["failed"], 0)
+        self.assertIsNone(state["jobs"][0]["error"])
+
     def test_artifacts_require_auth_and_matching_generation(self):
         def process(wid, args, **_kwargs):
             directory = Path(args.output_dir) / wid / args.audio_format
@@ -498,6 +516,13 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(code, 200)
         uploaded_path = Path(uploaded["source"])
         self.assertTrue(uploaded_path.is_file())
+        # Re-uploading identical bytes reuses the existing content-addressed file cleanly.
+        code2, uploaded2, _ = self.request(
+            "POST", "/app/upload?name=Band%20-%20Track.wav", b"RIFF-audio-bytes",
+            headers={"Content-Type": "audio/wav"},
+        )
+        self.assertEqual(code2, 200)
+        self.assertEqual(uploaded2["source"], uploaded["source"])
         self.assertEqual(self.request("POST", "/add", {
             "inputs": [uploaded["source"]], "model": "htdemucs", "audio_format": "mp3",
         })[0], 202)

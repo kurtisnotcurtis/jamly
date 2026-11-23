@@ -20,9 +20,9 @@ from . import __version__
 from .companion_ui import CSP
 from .config import API_VERSION, pairing_proof
 from .core import sanitize_filename
-from .models import ALL_OUTPUT_KINDS, validate_model, validate_stem
-from .normalize import InputError, LOCAL_AUDIO_EXTENSIONS
-from .outputs import read_manifest, resolve_output_path
+from .models import ALL_OUTPUT_KINDS
+from .normalize import InputError, LOCAL_AUDIO_EXTENSIONS, validate_local_audio_suffix
+from .outputs import checksum, read_manifest, resolve_output_path
 from .watch_queue import QueueError
 
 _STREAM_CHUNK_SIZE = 65536
@@ -97,6 +97,33 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
     def _media_type(self) -> str:
         return self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
 
+    def _is_loopback_origin(self, parsed) -> bool:
+        if not (self.app.ui.enabled and parsed.scheme == "http" and not parsed.username
+                and parsed.path in ("", "/") and not parsed.query and not parsed.fragment):
+            return False
+        try:
+            requested = urlsplit("//" + self.headers.get("Host", ""))
+        except ValueError:
+            return False
+        port = self.app._server.server_address[1]
+        return (
+            parsed.hostname == requested.hostname
+            and _is_loopback_host(parsed.hostname or "")
+            and (parsed.port or 80) == port
+            and (requested.port or 80) == port
+        )
+
+    @staticmethod
+    def _is_extension_origin(parsed) -> bool:
+        return (
+            parsed.scheme in ("chrome-extension", "moz-extension")
+            and bool(parsed.netloc)
+            and parsed.path in ("", "/")
+            and not parsed.username
+            and not parsed.query
+            and not parsed.fragment
+        )
+
     def _allowed_origin(self, origin: str) -> bool:
         if origin in self.app.args.allow_origin:
             return True
@@ -104,21 +131,7 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
             parsed = urlsplit(origin)
         except ValueError:
             return False
-        if (self.app.ui.enabled and parsed.scheme == "http" and not parsed.username
-                and parsed.path in ("", "/") and not parsed.query and not parsed.fragment):
-            try:
-                requested = urlsplit("//" + self.headers.get("Host", ""))
-                port = self.app._server.server_address[1]
-                if (parsed.hostname == requested.hostname
-                        and _is_loopback_host(parsed.hostname or "")
-                        and (parsed.port or 80) == port
-                        and (requested.port or 80) == port):
-                    return True
-            except ValueError:
-                return False
-        return (parsed.scheme in ("chrome-extension", "moz-extension")
-                and bool(parsed.netloc) and parsed.path in ("", "/")
-                and not parsed.username and not parsed.query and not parsed.fragment)
+        return self._is_loopback_origin(parsed) or self._is_extension_origin(parsed)
 
     def _cors(self):
         origin = self.headers.get("Origin")
@@ -433,15 +446,8 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
         replace = payload.get("replace_existing", False)
         if not isinstance(replace, bool):
             raise ValueError("replace_existing must be a boolean")
-        if "model" in payload:
-            validate_model(payload["model"])
-        if "stem" in payload:
-            validate_stem(payload["stem"])
-        if "audio_format" in payload and payload["audio_format"] not in ("mp3", "wav"):
-            raise ValueError("audio_format must be mp3 or wav")
-        added = self.app.enqueue(inputs, titles, replace, model=payload.get("model"),
-                                 audio_format=payload.get("audio_format"),
-                                 stem=payload.get("stem"))
+        kwargs = {key: payload[key] for key in ("model", "audio_format", "stem") if key in payload}
+        added = self.app.enqueue(inputs, titles, replace, **kwargs)
         self._json({"newly_added": added, "pending_count": self.app.snapshot()["pending"]}, 202)
 
     def _post_retry(self, wid: str, payload: dict):
@@ -544,12 +550,7 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
             if set(values) != {"name"} or not raw_name:
                 raise ValueError("Upload requires a ?name= filename query parameter")
             basename = Path(raw_name).name
-            suffix = Path(basename).suffix.lower()
-            if suffix not in LOCAL_AUDIO_EXTENSIONS:
-                raise ValueError(
-                    "Unsupported audio file extension %r; use wav, mp3, flac, m4a, ogg, opus, aac, aiff, or wma"
-                    % (suffix or basename)
-                )
+            suffix = validate_local_audio_suffix(Path(basename).suffix, basename)
             safe_name = sanitize_filename(Path(basename).stem) + suffix
             uploads_root = self.app.state_dir / "uploads"
             uploads_root.mkdir(parents=True, exist_ok=True)
@@ -569,11 +570,15 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
                         remaining -= len(chunk)
                     tmp.flush()
                     os.fsync(tmp.fileno())
-                dest_dir = uploads_root / digest.hexdigest()[:16]
+                hex_digest = digest.hexdigest()
+                dest_dir = uploads_root / hex_digest[:16]
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 dest_path = dest_dir / safe_name
-                os.replace(temp_path, dest_path)
-                temp_path = None
+                if dest_path.is_file() and dest_path.stat().st_size == length and checksum(dest_path) == hex_digest:
+                    pass
+                else:
+                    os.replace(temp_path, dest_path)
+                    temp_path = None
             finally:
                 if temp_path is not None:
                     temp_path.unlink(missing_ok=True)

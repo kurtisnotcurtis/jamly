@@ -6,7 +6,6 @@ import hmac
 from http.server import ThreadingHTTPServer
 import os
 from pathlib import Path
-import re
 import signal
 import socket
 import sys
@@ -21,15 +20,17 @@ from .config import (
 )
 from .http_handler import QueueStatusHandler, _is_loopback_host
 from .models import (
-    ALL_OUTPUT_KINDS, DEFAULT_MODEL, DEFAULT_STEM, model_choices, stem_choices,
-    validate_model, validate_stem,
+    ALL_OUTPUT_KINDS, AUDIO_FORMATS, DEFAULT_AUDIO_FORMAT, DEFAULT_MODEL, DEFAULT_STEM,
+    model_choices, stem_choices, validate_audio_format, validate_model, validate_stem,
 )
-from .normalize import make_input
+from .normalize import is_valid_stable_id, make_input
 from .outputs import audio_directory, read_manifest, resolve_output_path
 from .run import ItemResult, process_one
 from .runtime import open_directory
 from .tray import create_tray
 from .watch_queue import QueueError, WatchQueue, queue_owner
+
+_UNSET = object()
 
 
 def _authorized(header: str, token: str) -> bool:
@@ -69,11 +70,11 @@ def _discover_manifest(meta_root: Path, meta_path: Path) -> dict | None:
     except (OSError, ValueError):
         return None
     wid = manifest.get("watch_id") or rel_parts[0]
-    if not isinstance(wid, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", wid):
+    if not is_valid_stable_id(wid):
         return None
     audio_format = manifest.get("format")
-    if audio_format not in ("mp3", "wav"):
-        audio_format = meta_path.parent.name if meta_path.parent.name in ("mp3", "wav") else "mp3"
+    if audio_format not in AUDIO_FORMATS:
+        audio_format = meta_path.parent.name if meta_path.parent.name in AUDIO_FORMATS else DEFAULT_AUDIO_FORMAT
     outputs = {
         kind: str(resolve_output_path(meta_path.parent, rec["file"]))
         for kind, rec in manifest["outputs"].items()
@@ -339,24 +340,24 @@ class ItemServer:
         self.queue = candidate
         return value
 
-    def enqueue(self, inputs, titles=None, replace=False, *, model=None, audio_format=None,
-                stem=None) -> int:
+    def enqueue(self, inputs, titles=None, replace=False, *, model=_UNSET, audio_format=_UNSET,
+                stem=_UNSET) -> int:
         normalized = [make_input(source) for source in inputs]
         if not self.ui.enabled and any(item.watch_id.startswith("file-") for item in normalized):
             raise ValueError("Local file paths require a loopback backend")
-        if model is not None:
+        if model is not _UNSET:
             validate_model(model)
-        if audio_format is not None and audio_format not in ("mp3", "wav"):
-            raise ValueError("audio_format must be mp3 or wav")
-        if stem is not None:
+        if audio_format is not _UNSET:
+            validate_audio_format(audio_format)
+        if stem is not _UNSET:
             validate_stem(stem)
         with self._status_lock:
             options = dict(pipeline_options(self.args), replace_existing=replace or self.args.replace_existing)
-            if model is not None:
+            if model is not _UNSET:
                 options["model"] = model
-            if audio_format is not None:
+            if audio_format is not _UNSET:
                 options["audio_format"] = audio_format
-            if stem is not None:
+            if stem is not _UNSET:
                 options["stem"] = stem
             validate_stem(options.get("stem", DEFAULT_STEM), options.get("model", DEFAULT_MODEL))
             if self._error or self._stop.is_set():
@@ -433,7 +434,7 @@ class ItemServer:
             self._current_cancel = None
             if self._stop.is_set() and not user_cancelled and result.status not in ("done", "skipped"):
                 status, error = "pending", None
-            elif user_cancelled and result.status == "cancelled":
+            elif user_cancelled and result.status not in ("done", "skipped"):
                 status, error = "cancelled", None
             else:
                 status, error = result.status, result.error
@@ -470,7 +471,7 @@ class ItemServer:
         if model_filter != "all":
             validate_model(model_filter)
         format_filter = (query.get("format") or ["all"])[0].strip().lower()
-        if format_filter not in ("all", "mp3", "wav"):
+        if format_filter != "all" and format_filter not in AUDIO_FORMATS:
             raise ValueError("format filter must be all, mp3, or wav")
         try:
             page = int((query.get("page") or ["1"])[0])
@@ -483,7 +484,15 @@ class ItemServer:
         return q, status_filter, model_filter, format_filter, page, page_size
 
     @staticmethod
-    def _matches_filters(item: dict, q: str, status_filter: str, model_filter: str, format_filter: str) -> bool:
+    def _matches_option(item: dict, key: str, default: str, wanted: str) -> bool:
+        if wanted == "all":
+            return True
+        if (item.get("options") or {}).get(key, default) == wanted:
+            return True
+        return any(exp.get(key, default) == wanted for exp in (item.get("exports") or {}).values())
+
+    @classmethod
+    def _matches_filters(cls, item: dict, q: str, status_filter: str, model_filter: str, format_filter: str) -> bool:
         status = item["status"]
         if status_filter == "active" and status not in ("pending", "running"):
             return False
@@ -491,18 +500,10 @@ class ItemServer:
             return False
         if status_filter in ("error", "cancelled") and status != status_filter:
             return False
-        options = item.get("options") or {}
-        exports = (item.get("exports") or {}).values()
-        if model_filter != "all":
-            if options.get("model", DEFAULT_MODEL) != model_filter and not any(
-                exp.get("model", DEFAULT_MODEL) == model_filter for exp in exports
-            ):
-                return False
-        if format_filter != "all":
-            if options.get("audio_format", "mp3") != format_filter and not any(
-                exp.get("audio_format", "mp3") == format_filter for exp in exports
-            ):
-                return False
+        if not cls._matches_option(item, "model", DEFAULT_MODEL, model_filter):
+            return False
+        if not cls._matches_option(item, "audio_format", DEFAULT_AUDIO_FORMAT, format_filter):
+            return False
         if q:
             haystack = "\n".join(
                 str(part) for part in (item.get("title"), item.get("watch_id"), item.get("source_url"), item.get("error"))
