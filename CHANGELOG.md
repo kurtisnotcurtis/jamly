@@ -4,7 +4,19 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+- **Prevent arbitrary file reads and HTTP proxying through `/source/<id>`.** Reject non-audio local paths in input normalization, reject local file paths on non-loopback binds, remove the HTTP proxy branch from `/source/<id>`, and serve only verified `original_path` files recorded on completed jobs (`src/jamly/normalize.py`, `src/jamly/server.py`, `src/jamly/run.py`).
+- **Keep canonical `source_url` intact across completions and retries.** Store the retained original audio path in a dedicated `original_path` job field (and restore it during export rescanning from `manifest["original"]`), so URL retries reprocess the original URL instead of the retained local copy (`src/jamly/watch_queue.py`, `src/jamly/server.py`, `src/jamly/run.py`, `src/jamly/web/app.js`).
+- **Tag `all`-stems exports in output filenames.** Include `[all]` in exported filenames for `--stem all` so exporting all stems never overwrites an existing stem pair (such as `drums`/`no_drums`) at a different gain, removing the sibling-manifest checksum patching code (`src/jamly/run.py`, `src/jamly/outputs.py`).
+- **Requeue in-flight jobs reliably on service shutdown.** Add `KillMode=mixed` to the Linux systemd unit, raise cancellation when a failing subprocess exits after `cancel_event` is set, and requeue any non-completed job during server shutdown unless explicitly cancelled by the user (`src/jamly/service.py`, `src/jamly/core.py`, `src/jamly/server.py`).
+- **Clean up uploaded audio files.** Delete private uploaded copies in `state_dir/uploads/` when their job is cleared from the list and prune orphaned uploads on backend startup (`src/jamly/server.py`).
+- **Avoid lock-contention failures during playback/retry.** Hold the per-output file lock in `process_one` only during cache-check and publish with cancel-aware waiting, and report sustained contention cleanly without exposing raw `.lock` paths (`src/jamly/run.py`).
+- **Do not re-run cancelled jobs on bare `jamly` invocation.** Retry only `error` jobs when invoked without `-i` inputs, matching `DESIGN.md` (`src/jamly/run.py`).
+- **Handle cross-drive output paths on Windows.** Fall back to the absolute path in `Logger.link` when `os.path.relpath` raises `ValueError` across drives (`src/jamly/logging.py`).
+- **Companion UI fixes.** Return the promise from `playOutput` (and wrap sticky player toggles in `action`) so audio load failures reach the error banner; honor the server's normalized `Content-Type` header; implement HTTP byte-Range (`206`/`416`) streaming; stop "Open folder" and "Rescan" from silently saving form values as defaults; ship `jamly_client.js` as package data and fall back to `site.USER_BASE` in `browser_assets` (`src/jamly/web/app.js`, `src/jamly/server.py`, `src/jamly/companion_ui.py`, `src/jamly/runtime.py`).
+
+### Changed
+- **Simplification, queue performance, and CI hardening.** Refactored `QueueStatusHandler.do_POST` into a route table and unified file streaming; made `WatchQueue` copy-on-write and removed legacy residue (`done` list writes, `mark_done`/`is_complete`/`count_pending`/`default_queue_path`/`normalize_inputs`, `ItemResult.drums_path`/`nodrums_path`, `/items`, `ac_server*`, unreachable preference branch); shared model/stem selection helpers between the companion UI and popup; imported `jamly.__version__` in `tools/Jamly.spec`; made `tools/dev-check.py` fail fast, dropped duplicate `unittest` runs, invoked it directly from `ci.yml`, pinned all GitHub Actions to commit SHAs, and checksum-pinned `wingetcreate.exe`.
 
 ## [0.2.5] - 2026-11-22
 

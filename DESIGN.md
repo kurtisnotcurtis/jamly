@@ -45,8 +45,9 @@ peak check targeting -1 dBFS; any additional attenuation is shared and re-encode
 ## Output transaction
 
 Exported audio files live directly in `<output>/` (`Artist - Song [id]_<stem>.<ext>`, with ` [<model>]`
-appended when a non-default model preset is selected), while internal manifests (`metadata.json`,
-including a generation id and SHA-256 checksums) live under `<output>/.jamly/<stable-id>/<model>/[<stem>/]<format>/`.
+appended for non-default model presets and ` [all]` appended for all-stems exports so individual stems
+never collide with stem pairs), while internal manifests (`metadata.json`, including a generation id and
+SHA-256 checksums) live under `<output>/.jamly/<stable-id>/<model>/[<stem>/]<format>/`.
 
 A per-track/model/format lock prevents overlapping publishers. All output files are completed in a
 sibling staging directory under `.jamly/`, then atomically published into `<output>/` alongside the
@@ -110,7 +111,10 @@ An accepted job retains its original settings even if the defaults change.
 
 A private per-user token or a companion session is required for jobs, status and stem playback. The unauthenticated health probe
 contains no paths or credentials. Origin and Host checks are independent of authentication. Result
-URLs refer to known completed artifacts, never arbitrary client-supplied filesystem paths.
+URLs (`/outputs/...` and `/source/...`) refer only to known completed artifacts (or verified retained
+source audio recorded after completion), never arbitrary client-supplied filesystem paths or proxied
+remote URLs. Local file uploads stored in private state are cleaned up when their jobs are cleared or
+orphaned.
 
 Automatic pairing delivers a two-minute, single-use launch ticket in a private local HTML file.
 The browser submits it in a POST body, receives a 24-hour session token, and stores that token in
@@ -175,9 +179,10 @@ store submission and an automatic updater are not configured.
 Release versions follow Semantic Versioning (`MAJOR.MINOR.PATCH`, starting at `0.1.0`). Pre-`1.0`
 releases increment `MINOR` for new features, presets, or contract changes and `PATCH` for bug fixes
 and dependency updates. `tools/version.py` keeps `src/jamly/__init__.py`, `pyproject.toml`, `uv.lock`,
-`browser/extension/manifest.json`, `browser/userscripts/jamly.user.js`, and `tools/Jamly.spec` in
-strict lockstep; CI and tests enforce that all six match. Output cache schema (`PROCESSING_VERSION`)
-and loopback control protocol (`api_version`) are versioned independently from the release number.
+`browser/extension/manifest.json`, and `browser/userscripts/jamly.user.js` in strict lockstep, while
+`tools/Jamly.spec` imports `jamly.__version__` directly; CI and tests enforce alignment. Output cache
+schema (`PROCESSING_VERSION`) and loopback control protocol (`api_version`) are versioned independently
+from the release number.
 
 To cut a release, run `uv run --locked python tools/version.py --set X.Y.Z`, run the test and lint
 suites, commit on `main`, and push an annotated `vX.Y.Z` tag. Tag pushes trigger `companions.yml`,

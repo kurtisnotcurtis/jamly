@@ -195,7 +195,7 @@ The local backend speaks **API version 3** on `127.0.0.1`. All job, settings, up
 | Endpoint | Purpose |
 |---|---|
 | `GET /healthz` | Public health & `api_version` check (exposes no paths or credentials) |
-| `GET /status` (or `/items`) | Queue counts, active stage + percentage progress, and job records with download URLs |
+| `GET /status` | Queue counts, active stage + percentage progress, and job records with download URLs |
 | `POST /add` | `{"inputs":["URL_OR_PATH"],"model":"htdemucs_ft","stem":"vocals","audio_format":"wav","replace_existing":false}` |
 | `POST /app/upload?name=song.wav` | Stream raw audio bytes (`audio/*` or `application/octet-stream`) into private state and return its local path |
 | `POST /settings` | Persist default `model`, `stem`, `audio_format`, and `output_dir` |
@@ -220,7 +220,7 @@ uv sync --locked
 python tools/dev-check.py            # run the whole CI suite locally before pushing
 ```
 
-`tools/dev-check.py` reproduces `.github/workflows/ci.yml` step-for-step (lockstep version check, `jamly-doctor`, pytest, unittest, ruff, Node extension tests, and a fresh-install wheel smoke) and fails fast on the first broken stage. Opt into the heavier real-model checks:
+`tools/dev-check.py` is the single runner used both locally and in `.github/workflows/ci.yml` (lockstep version check, `jamly-doctor`, pytest, ruff, Node extension tests, and a fresh-install wheel smoke) and fails fast on the first broken stage. Opt into the heavier real-model checks:
 
 ```sh
 python tools/dev-check.py --integration    # real Demucs pipeline on synthesized WAV
