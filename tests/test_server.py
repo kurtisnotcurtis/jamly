@@ -131,7 +131,7 @@ class ServerTests(unittest.TestCase):
         if sys.platform != "win32":
             self.assertEqual(path.stat().st_mode & 0o077, 0)
         body = urlencode({"ticket": ticket}).encode()
-        headers = {"Content-Type": "application/x-www-form-urlencoded", "Origin": "null"}
+        headers = {"Content-Type": "Application/X-WWW-Form-Urlencoded; charset=utf-8", "Origin": "null"}
         code, page, response_headers = self.request("POST", "/app/session", body, auth=False,
                                                    headers=headers, raw=True)
         self.assertEqual(code, 200)
@@ -453,6 +453,7 @@ class ServerTests(unittest.TestCase):
         code, body, _ = self.request("GET", output["url"], raw=True)
         self.assertEqual((code, body), (200, b"drums"))
         self.assertEqual(self.request("GET", output["url"].replace("generation-one", "stale"))[0], 409)
+        self.assertEqual(self.request("GET", "/outputs/unknown-job/drums?generation=generation-one")[0], 404)
         self.assertEqual(self.request("GET", "/outputs/" + self.wid + "/../server-token")[0], 404)
         form_headers = {"Content-Type": "application/x-www-form-urlencoded", "Origin": self.app.base_url}
         retired_download = output["url"].replace("/outputs/", "/app/download/", 1)

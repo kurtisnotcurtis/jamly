@@ -2,54 +2,34 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import hmac
-import ipaddress
-import json
-import mimetypes
+from http.server import ThreadingHTTPServer
 import os
 from pathlib import Path
 import re
 import signal
 import socket
-import subprocess
 import sys
-import tempfile
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from urllib.parse import quote, urlsplit
 
-from filelock import FileLock, Timeout
-
-from . import __version__
+from .companion_ui import CompanionUI
 from .config import (
-    add_pipeline_arguments, instance_path, job_arguments, pairing_proof, pairing_token,
+    API_VERSION, add_pipeline_arguments, instance_path, job_arguments, pairing_token,
     parse_configured_args, pipeline_options, runtime_paths, token_command,
     validate_preferences, write_private_json,
 )
-from .companion_ui import CSP, CompanionUI
-from .core import sanitize_filename
+from .http_handler import QueueStatusHandler, _is_loopback_host
 from .models import (
     ALL_OUTPUT_KINDS, DEFAULT_MODEL, DEFAULT_STEM, model_choices, stem_choices,
     validate_model, validate_stem,
 )
-from .normalize import InputError, LOCAL_AUDIO_EXTENSIONS, make_input
+from .normalize import make_input
 from .outputs import audio_directory, read_manifest, resolve_output_path
 from .run import ItemResult, process_one
 from .runtime import open_directory
 from .tray import create_tray
 from .watch_queue import QueueError, WatchQueue, queue_owner
-
-_STREAM_CHUNK_SIZE = 65536
-
-
-def _is_loopback_host(host: str) -> bool:
-    if host.lower() == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
 
 
 def _authorized(header: str, token: str) -> bool:
@@ -65,40 +45,60 @@ def _port(value: str) -> int:
     return port
 
 
-def _audio_content_type(name: str, default: str = "audio/mpeg") -> str:
-    content_type = mimetypes.guess_type(name)[0] or default
-    # Windows and Linux disagree on the WAV MIME type (audio/wav vs audio/x-wav); serve
-    # the canonical value so clients get a consistent Content-Type regardless of host.
-    if content_type == "audio/x-wav":
-        return "audio/wav"
-    return content_type
-
-
-def _parse_range(header: str, size: int) -> tuple[int, int] | None:
-    """Parse a single HTTP byte Range header; returns (start, end) inclusive, or None if invalid."""
-    if not header or size <= 0:
+def _upload_path(raw: str | None, uploads_root: Path) -> Path | None:
+    if not isinstance(raw, str) or not raw.strip():
         return None
-    spec = header.strip()
-    if not spec.lower().startswith("bytes="):
+    if urlsplit(raw).scheme.lower() in ("http", "https"):
         return None
-    range_part = spec[6:].strip()
-    if "," in range_part or "-" not in range_part:
+    candidate = Path(raw)
+    if not candidate.is_absolute():
         return None
-    start_str, end_str = range_part.split("-", 1)
-    start_str, end_str = start_str.strip(), end_str.strip()
     try:
-        if not start_str:
-            suffix_len = int(end_str)
-            if suffix_len <= 0:
-                return None
-            return max(0, size - suffix_len), size - 1
-        start = int(start_str)
-        end = size - 1 if not end_str else min(int(end_str), size - 1)
-    except ValueError:
+        resolved = candidate.resolve()
+    except OSError:
         return None
-    if start < 0 or start >= size or end < start:
+    return resolved if resolved.is_relative_to(uploads_root) else None
+
+
+def _discover_manifest(meta_root: Path, meta_path: Path) -> dict | None:
+    rel_parts = meta_path.relative_to(meta_root).parts
+    if any(part.startswith(".") for part in rel_parts):
         return None
-    return start, end
+    try:
+        manifest = read_manifest(meta_path.parent, verify_hashes=False)
+    except (OSError, ValueError):
+        return None
+    wid = manifest.get("watch_id") or rel_parts[0]
+    if not isinstance(wid, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", wid):
+        return None
+    audio_format = manifest.get("format")
+    if audio_format not in ("mp3", "wav"):
+        audio_format = meta_path.parent.name if meta_path.parent.name in ("mp3", "wav") else "mp3"
+    outputs = {
+        kind: str(resolve_output_path(meta_path.parent, rec["file"]))
+        for kind, rec in manifest["outputs"].items()
+    }
+    outputs["metadata"] = str(meta_path)
+    original_path = None
+    recorded_orig = manifest.get("original")
+    if isinstance(recorded_orig, str) and recorded_orig.strip():
+        orig_candidate = Path(recorded_orig)
+        if not orig_candidate.is_absolute():
+            orig_candidate = audio_directory(meta_path.parent) / recorded_orig
+        if orig_candidate.is_file() and not orig_candidate.is_symlink():
+            original_path = str(orig_candidate)
+    return {
+        "watch_id": wid,
+        "source_url": manifest.get("source_url") or wid,
+        "original_path": original_path,
+        "title": manifest.get("title"),
+        "model": manifest.get("model", DEFAULT_MODEL),
+        "stem": manifest.get("stem", DEFAULT_STEM),
+        "audio_format": audio_format,
+        "outputs": outputs,
+        "generation": manifest["generation"],
+        "finished_at": meta_path.stat().st_mtime,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -191,17 +191,9 @@ class ItemServer:
         referenced = set()
         for item in self.queue._items:
             for field in ("source_url", "original_path"):
-                raw = item.get(field)
-                if not isinstance(raw, str) or not raw.strip():
-                    continue
-                if urlsplit(raw).scheme.lower() in ("http", "https"):
-                    continue
-                try:
-                    resolved = Path(raw).resolve()
-                except OSError:
-                    continue
-                if resolved.is_relative_to(uploads_root):
-                    referenced.add(resolved)
+                path = _upload_path(item.get(field), uploads_root)
+                if path is not None:
+                    referenced.add(path)
         return referenced
 
     def _cleanup_uploads(self, candidates: list[str]) -> None:
@@ -212,15 +204,8 @@ class ItemServer:
             return
         referenced = self._referenced_upload_paths()
         for raw in candidates:
-            if not isinstance(raw, str) or not raw.strip():
-                continue
-            if urlsplit(raw).scheme.lower() in ("http", "https"):
-                continue
-            try:
-                path = Path(raw).resolve()
-            except OSError:
-                continue
-            if not path.is_relative_to(uploads_root) or path in referenced:
+            path = _upload_path(raw, uploads_root)
+            if path is None or path in referenced:
                 continue
             try:
                 path.unlink(missing_ok=True)
@@ -239,8 +224,7 @@ class ItemServer:
             if not entry.is_file():
                 continue
             try:
-                resolved = entry.resolve()
-                if entry.name.startswith(".upload-") or resolved not in referenced:
+                if entry.name.startswith(".upload-") or entry.resolve() not in referenced:
                     entry.unlink(missing_ok=True)
             except OSError:
                 pass
@@ -286,8 +270,7 @@ class ItemServer:
                     source = (item or {}).get("source_url")
                     if not source:
                         raise ValueError("This job has no recorded source")
-                    scheme = urlsplit(source).scheme.lower()
-                    if scheme in ("http", "https"):
+                    if urlsplit(source).scheme.lower() in ("http", "https"):
                         raise ValueError("Remote URLs do not have a local source folder")
                     source_path = Path(source)
                     if not source_path.exists():
@@ -336,48 +319,10 @@ class ItemServer:
             meta_root = Path(self.args.output_dir) / ".jamly"
             if not meta_root.is_dir():
                 return 0
-            discovered = []
-            for meta_path in sorted(meta_root.rglob("metadata.json")):
-                rel_parts = meta_path.relative_to(meta_root).parts
-                if any(part.startswith(".") for part in rel_parts):
-                    continue
-                try:
-                    manifest = read_manifest(meta_path.parent, verify_hashes=False)
-                except (OSError, ValueError):
-                    continue
-                wid = manifest.get("watch_id") or rel_parts[0]
-                if not isinstance(wid, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", wid):
-                    continue
-                model = manifest.get("model", DEFAULT_MODEL)
-                stem = manifest.get("stem", DEFAULT_STEM)
-                audio_format = manifest.get("format")
-                if audio_format not in ("mp3", "wav"):
-                    audio_format = meta_path.parent.name if meta_path.parent.name in ("mp3", "wav") else "mp3"
-                outputs = {
-                    kind: str(resolve_output_path(meta_path.parent, rec["file"]))
-                    for kind, rec in manifest["outputs"].items()
-                }
-                outputs["metadata"] = str(meta_path)
-                original_path = None
-                recorded_orig = manifest.get("original")
-                if isinstance(recorded_orig, str) and recorded_orig.strip():
-                    orig_candidate = Path(recorded_orig)
-                    if not orig_candidate.is_absolute():
-                        orig_candidate = audio_directory(meta_path.parent) / recorded_orig
-                    if orig_candidate.is_file() and not orig_candidate.is_symlink():
-                        original_path = str(orig_candidate)
-                discovered.append({
-                    "watch_id": wid,
-                    "source_url": manifest.get("source_url") or wid,
-                    "original_path": original_path,
-                    "title": manifest.get("title"),
-                    "model": model,
-                    "stem": stem,
-                    "audio_format": audio_format,
-                    "outputs": outputs,
-                    "generation": manifest["generation"],
-                    "finished_at": meta_path.stat().st_mtime,
-                })
+            discovered = [
+                entry for meta_path in sorted(meta_root.rglob("metadata.json"))
+                if (entry := _discover_manifest(meta_root, meta_path)) is not None
+            ]
             if not discovered:
                 return 0
             candidate = self.queue.copy()
@@ -568,7 +513,21 @@ class ItemServer:
         return True
 
     @staticmethod
-    def _serialize_job(item: dict) -> dict:
+    def _serialize_outputs(wid: str, outputs: dict, generation: str) -> list[dict]:
+        return [
+            {
+                "kind": kind,
+                "name": Path(path).name,
+                "url": "/outputs/%s/%s?generation=%s" % (
+                    quote(wid, safe=""), kind, quote(generation, safe="")
+                ),
+            }
+            for kind, path in (outputs or {}).items()
+            if kind in ALL_OUTPUT_KINDS
+        ]
+
+    @classmethod
+    def _serialize_job(cls, item: dict) -> dict:
         record = {key: item.get(key) for key in (
             "watch_id", "title", "source_url", "status", "error", "attempts",
             "requested_at", "started_at", "finished_at", "duration_seconds", "updated_at",
@@ -582,27 +541,12 @@ class ItemServer:
         active_generation = None
         if item["status"] in ("done", "skipped") and item.get("generation"):
             active_generation = item["generation"]
-            for kind, path in item.get("outputs", {}).items():
-                if kind in ALL_OUTPUT_KINDS:
-                    record["outputs"].append({
-                        "kind": kind, "name": Path(path).name,
-                        "url": "/outputs/%s/%s?generation=%s" % (
-                            quote(item["watch_id"], safe=""), kind, quote(item["generation"], safe="")
-                        ),
-                    })
+            record["outputs"] = cls._serialize_outputs(item["watch_id"], item.get("outputs", {}), active_generation)
         for exp in (item.get("exports") or {}).values():
             gen = exp.get("generation")
             if not gen or gen == active_generation:
                 continue
-            exp_outputs = []
-            for kind, path in exp.get("outputs", {}).items():
-                if kind in ALL_OUTPUT_KINDS:
-                    exp_outputs.append({
-                        "kind": kind, "name": Path(path).name,
-                        "url": "/outputs/%s/%s?generation=%s" % (
-                            quote(item["watch_id"], safe=""), kind, quote(gen, safe="")
-                        ),
-                    })
+            exp_outputs = cls._serialize_outputs(item["watch_id"], exp.get("outputs", {}), gen)
             if exp_outputs:
                 record["exports"].append({
                     "model": exp.get("model", DEFAULT_MODEL),
@@ -617,12 +561,8 @@ class ItemServer:
         parsed = self._parse_status_query(query)
         with self._status_lock:
             items = self.queue._items
-            pending_count = 0
-            done_count = 0
-            failed_count = 0
-            running = []
-            pending = []
-            terminal = []
+            pending_count = done_count = failed_count = 0
+            running, pending, terminal = [], [], []
             for idx, item in enumerate(items):
                 st = item["status"]
                 if st == "pending":
@@ -653,13 +593,11 @@ class ItemServer:
                 start = (page - 1) * page_size
                 visible = matched[start:start + page_size]
                 pagination = {
-                    "page": page,
-                    "page_size": page_size,
-                    "total_matched": total_matched,
-                    "total_pages": total_pages,
+                    "page": page, "page_size": page_size,
+                    "total_matched": total_matched, "total_pages": total_pages,
                 }
             payload = {
-                "api_version": 3, "pending": pending_count,
+                "api_version": API_VERSION, "pending": pending_count,
                 "done": done_count, "failed": failed_count,
                 "total": len(items), "current": dict(self._current) if self._current else None,
                 "jobs": [self._serialize_job(item) for item in visible],
@@ -723,510 +661,6 @@ class ItemServer:
                 self._closed = True
             if self._tray is not None:
                 self._tray.stop()
-
-
-class QueueStatusHandler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
-
-    @property
-    def app(self) -> ItemServer:
-        return self.server.item_server
-
-    def log_message(self, fmt, *args):
-        pass
-
-    def _allowed_origin(self, origin: str) -> bool:
-        if origin in self.app.args.allow_origin:
-            return True
-        try:
-            parsed = urlsplit(origin)
-        except ValueError:
-            return False
-        if (self.app.ui.enabled and parsed.scheme == "http" and not parsed.username
-                and parsed.path in ("", "/") and not parsed.query and not parsed.fragment):
-            try:
-                requested = urlsplit("//" + self.headers.get("Host", ""))
-                if (parsed.hostname == requested.hostname
-                        and _is_loopback_host(parsed.hostname or "")
-                        and (parsed.port or 80) == self.app._server.server_address[1]
-                        and (requested.port or 80) == self.app._server.server_address[1]):
-                    return True
-            except ValueError:
-                return False
-        return (parsed.scheme in ("chrome-extension", "moz-extension")
-                and bool(parsed.netloc) and parsed.path in ("", "/")
-                and not parsed.username and not parsed.query and not parsed.fragment)
-
-    def _cors(self):
-        origin = self.headers.get("Origin")
-        if origin and self._allowed_origin(origin):
-            self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Vary", "Origin")
-
-    def _json(self, body, status=200):
-        self._bytes(json.dumps(body).encode("utf-8"), "application/json", status)
-
-    def _bytes(self, data, content_type, status=200, *, policy=None):
-        self.send_response(status)
-        self._cors()
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        # Native same-origin POST downloads need their Origin header; no-referrer makes it "null".
-        self.send_header("Referrer-Policy", "same-origin" if policy else "no-referrer")
-        if policy:
-            self.send_header("Content-Security-Policy", policy)
-            self.send_header("X-Frame-Options", "DENY")
-        if self.close_connection:
-            self.send_header("Connection", "close")
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _stream_file(self, path: Path, content_type: str, *, disposition: str | None = None,
-                     referrer_policy: str | None = None) -> bool:
-        """Stream a file with HTTP byte-Range support. Returns True once response headers are sent."""
-        range_header = self.headers.get("Range")
-        with path.open("rb") as file:
-            size = os.fstat(file.fileno()).st_size
-            start, end = 0, size - 1
-            status = 200
-            if range_header is not None:
-                parsed = _parse_range(range_header, size)
-                if parsed is None:
-                    self.send_response(416)
-                    self._cors()
-                    self.send_header("Content-Range", "bytes */%d" % size)
-                    self.send_header("Content-Length", "0")
-                    self.send_header("Cache-Control", "no-store")
-                    self.end_headers()
-                    return True
-                start, end = parsed
-                status = 206
-            length = max(0, end - start + 1) if size else 0
-            self.send_response(status)
-            self._cors()
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(length))
-            self.send_header("Accept-Ranges", "bytes")
-            if status == 206:
-                self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
-            if disposition:
-                self.send_header("Content-Disposition", disposition)
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            if referrer_policy:
-                self.send_header("Referrer-Policy", referrer_policy)
-            if self.close_connection:
-                self.send_header("Connection", "close")
-            self.end_headers()
-            if start:
-                file.seek(start)
-            remaining = length
-            while remaining > 0:
-                chunk = file.read(min(_STREAM_CHUNK_SIZE, remaining))
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                remaining -= len(chunk)
-        return True
-
-    def _allowed_request(self, auth=True, *, bootstrap=False):
-        allowed = {"localhost", "127.0.0.1", "::1", self.app.args.host.lower(),
-                   *[host.lower() for host in self.app.args.allow_host]}
-        try:
-            host = urlsplit("//" + self.headers.get("Host", ""))
-            valid_host = (host.hostname in allowed and not host.username and not host.path
-                          and not host.query and not host.fragment and (host.port is None or host.port > 0))
-        except ValueError:
-            valid_host = False
-        origin = self.headers.get("Origin")
-        origin_ok = not origin or self._allowed_origin(origin) or (bootstrap and origin == "null")
-        if not valid_host or not origin_ok:
-            self.close_connection = True
-            self._json({"error": "Host or browser origin is not allowed"}, 403)
-            return False
-        if auth and not self.app.authorized(self.headers.get("Authorization", "")):
-            self.close_connection = True
-            self._json({"error": "Session expired or client not paired. Reopen Jamly, or pair the extension "
-                        "with the token from the companion's extension setup."}, 401)
-            return False
-        return True
-
-    def do_OPTIONS(self):
-        if not self._allowed_request(auth=False):
-            return
-        self.send_response(204)
-        self._cors()
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, Range")
-        if self.headers.get("Access-Control-Request-Private-Network") == "true":
-            self.send_header("Access-Control-Allow-Private-Network", "true")
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-    def do_GET(self):
-        url = urlsplit(self.path)
-        public = url.path in ("/", "/app", "/healthz", "/handshake") or url.path.startswith("/app/")
-        if not self._allowed_request(auth=not public):
-            return
-        if url.path in ("/", "/app"):
-            self.send_response(303)
-            self.send_header("Location", "/app/")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-        elif url.path.startswith("/app/"):
-            try:
-                data, kind = self.app.ui.asset(url.path)
-                self._bytes(data, kind, policy=CSP)
-            except OSError:
-                self._json({"error": "Companion asset is missing; reinstall Jamly or check the URL"}, 404)
-        elif url.path == "/handshake" and self.app.ui.enabled:
-            self._get_handshake(url)
-        elif url.path == "/healthz":
-            self._json({"ok": not bool(self.app._error), "version": __version__,
-                        "api_version": 3, "authentication_required": True})
-        elif url.path == "/status":
-            try:
-                query = parse_qs(url.query, keep_blank_values=False) if url.query else None
-                self._json(self.app.snapshot(query))
-            except ValueError as exc:
-                self._json({"error": str(exc)}, 400)
-        elif url.path.startswith("/source/"):
-            self._source(url)
-        elif url.path.startswith("/outputs/"):
-            self._output(url)
-        else:
-            self._json({"error": "not found"}, 404)
-
-    def _get_handshake(self, url):
-        try:
-            values = parse_qs(url.query, strict_parsing=True, max_num_fields=1)
-            nonce = values.get("nonce", [""])[0]
-            if set(values) != {"nonce"} or not re.fullmatch(r"[a-f0-9]{64}", nonce):
-                raise ValueError("A 32-byte hexadecimal challenge is required")
-            self._json({"api_version": 3, "proof": pairing_proof(
-                self.app._token, nonce, self.app.base_url, Path(self.app.queue_path),
-            )})
-        except ValueError as exc:
-            self._json({"error": str(exc)}, 400)
-
-    def _output(self, url):
-        parts = url.path.split("/")
-        if len(parts) != 4 or parts[3] not in ALL_OUTPUT_KINDS:
-            self._json({"error": "unknown output"}, 404)
-            return
-        with self.app._status_lock:
-            item = self.app.queue.get(unquote(parts[2]))
-        generation = parse_qs(url.query).get("generation", [None])[0]
-        target_outputs = None
-        if item and generation:
-            if item["status"] in ("done", "skipped") and generation == item.get("generation"):
-                target_outputs = item.get("outputs")
-            else:
-                for exp in (item.get("exports") or {}).values():
-                    if exp.get("generation") == generation:
-                        target_outputs = exp.get("outputs")
-                        break
-        if not item or (item["status"] not in ("done", "skipped") and not item.get("exports")):
-            self._json({"error": "outputs are not ready"}, 409)
-            return
-        if not target_outputs or not target_outputs.get("metadata"):
-            self._json({"error": "output generation changed; refresh the job"}, 409)
-            return
-        started = False
-        try:
-            directory = Path(target_outputs["metadata"]).parent
-            lock = FileLock(str(directory.parent / ("." + directory.name + ".lock")), timeout=0)
-            with lock:
-                manifest = read_manifest(directory, verify_hashes=False)
-                if manifest["generation"] != generation:
-                    self._json({"error": "output generation changed; refresh the job"}, 409)
-                    return
-                kind = parts[3]
-                name = "metadata.json" if kind == "metadata" else manifest["outputs"][kind]["file"]
-                path = directory / name if kind == "metadata" else resolve_output_path(directory, name)
-                content_type = "application/json" if kind == "metadata" else _audio_content_type(
-                    name, default="application/octet-stream"
-                )
-                started = self._stream_file(
-                    path, content_type,
-                    disposition="attachment; filename*=UTF-8''" + quote(name),
-                )
-        except Timeout:
-            self._json({"error": "outputs are being replaced; try again shortly"}, 409)
-        except (OSError, ValueError, KeyError) as exc:
-            if started:
-                self.close_connection = True
-                raise
-            self._json({"error": "output is unavailable: %s" % exc}, 404)
-
-    def _source(self, url):
-        parts = url.path.split("/")
-        if len(parts) != 3 or not parts[2]:
-            self._json({"error": "unknown source"}, 404)
-            return
-        watch_id = unquote(parts[2])
-        with self.app._status_lock:
-            item = self.app.queue.get(watch_id)
-        if not item:
-            self._json({"error": "source is unavailable for this job"}, 404)
-            return
-        original = (item.get("original_path") or "").strip()
-        if not original:
-            self._json({"error": "no retained source audio available"}, 404)
-            return
-        path = Path(original)
-        if path.is_symlink() or not path.is_file() or path.suffix.lower() not in LOCAL_AUDIO_EXTENSIONS:
-            self._json({"error": "source file is unavailable"}, 404)
-            return
-        if not self.app.ui.enabled:
-            job_output_dir = Path((item.get("options") or {}).get("output_dir") or self.app.args.output_dir).resolve()
-            if not path.resolve().is_relative_to(job_output_dir):
-                self._json({"error": "source file is unavailable on non-loopback binds"}, 403)
-                return
-        started = False
-        try:
-            started = self._stream_file(
-                path, _audio_content_type(path.name), referrer_policy="same-origin"
-            )
-        except (OSError, ValueError) as exc:
-            if started:
-                self.close_connection = True
-                raise
-            self._json({"error": "source is unavailable: %s" % exc}, 404)
-
-    def _read_json_payload(self) -> dict | None:
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            length = -1
-        if length < 0 or length > 1024 * 1024 or self.headers.get("Transfer-Encoding"):
-            self.close_connection = True
-            self._json({"error": "invalid or oversized request body"}, 400)
-            return None
-        if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
-            self.close_connection = True
-            self._json({"error": "Content-Type must be application/json"}, 415)
-            return None
-        self.connection.settimeout(10)
-        payload = json.loads(self.rfile.read(length))
-        if not isinstance(payload, dict):
-            raise ValueError("body must be a JSON object")
-        return payload
-
-    def _post_launch(self, payload: dict):
-        if payload:
-            raise ValueError("Launch takes no options")
-        launch = self.app.ui.launch(self.app.base_url)
-        self._json({"launch_file": launch.as_uri()})
-
-    def _post_settings(self, payload: dict):
-        self._json(self.app.save_preferences(payload))
-
-    def _post_extension(self, payload: dict):
-        if payload or not self.app.ui.enabled:
-            raise ValueError("Extension setup takes no options and requires a loopback backend")
-        from .service import export_browser_assets
-        directory = export_browser_assets(self.app.state_dir, "extension")
-        self._json({"directory": str(directory), "token": self.app._token})
-
-    def _post_stop(self, payload: dict):
-        if not self.app.ui.enabled:
-            raise ValueError("Desktop actions require a loopback backend")
-        if payload:
-            raise ValueError("Stop takes no options")
-        self._json({"stopping": True})
-        threading.Thread(target=self.app.stop, name="jamly-stop", daemon=True).start()
-
-    def _post_open_folder(self, payload: dict):
-        if not self.app.ui.enabled:
-            raise ValueError("Desktop actions require a loopback backend")
-        if set(payload) - {"id", "target"} or ("id" in payload and not isinstance(payload["id"], str)):
-            raise ValueError("Open folder accepts only an optional job id and target")
-        if "target" in payload and payload["target"] not in ("output", "source"):
-            raise ValueError("Folder target must be output or source")
-        self.app.show_folder(payload.get("id"), target=payload.get("target", "output"))
-        self._json({"opened": True})
-
-    def _post_clear(self, payload: dict):
-        if set(payload) - {"id"} or ("id" in payload and not isinstance(payload["id"], str)):
-            raise ValueError("Clear accepts only an optional job id")
-        removed = self.app.clear_jobs(payload.get("id"))
-        self._json({"removed": removed, "pending_count": self.app.snapshot()["pending"]})
-
-    def _post_rescan(self, payload: dict):
-        if payload:
-            raise ValueError("Rescan takes no options")
-        restored = self.app.rescan_exports()
-        self._json({"restored": restored, "total": self.app.snapshot()["total"]})
-
-    def _post_add(self, payload: dict):
-        if set(payload) - {"inputs", "titles", "replace_existing", "model", "audio_format", "stem"}:
-            raise ValueError("unknown request field")
-        inputs = payload.get("inputs")
-        if not isinstance(inputs, list) or not inputs or not all(
-            isinstance(source, str) and source.strip() for source in inputs
-        ):
-            raise ValueError("inputs must be a non-empty list of non-empty strings")
-        titles = payload.get("titles")
-        if titles is not None and (not isinstance(titles, list) or len(titles) != len(inputs)
-                                   or any(title is not None and not isinstance(title, str) for title in titles)):
-            raise ValueError("titles must match the inputs list")
-        replace = payload.get("replace_existing", False)
-        if not isinstance(replace, bool):
-            raise ValueError("replace_existing must be a boolean")
-        if "model" in payload:
-            validate_model(payload["model"])
-        if "stem" in payload:
-            validate_stem(payload["stem"])
-        if "audio_format" in payload and payload["audio_format"] not in ("mp3", "wav"):
-            raise ValueError("audio_format must be mp3 or wav")
-        added = self.app.enqueue(inputs, titles, replace, model=payload.get("model"),
-                                 audio_format=payload.get("audio_format"),
-                                 stem=payload.get("stem"))
-        self._json({"newly_added": added, "pending_count": self.app.snapshot()["pending"]}, 202)
-
-    def _post_retry(self, wid: str, payload: dict):
-        if set(payload) - {"replace_existing"} or not isinstance(payload.get("replace_existing", False), bool):
-            raise ValueError("retry accepts only a boolean replace_existing field")
-        added = int(self.app.retry(wid, payload.get("replace_existing", False)))
-        self._json({"newly_added": added, "pending_count": self.app.snapshot()["pending"]}, 202)
-
-    def _post_cancel(self, wid: str, payload: dict):
-        if payload:
-            raise ValueError("cancel takes no options")
-        cancelled = self.app.cancel(wid)
-        self._json({"cancelled": cancelled, "pending_count": self.app.snapshot()["pending"]}, 202)
-
-    _POST_ROUTES = {
-        "/app/launch": _post_launch,
-        "/settings": _post_settings,
-        "/app/extension": _post_extension,
-        "/app/stop": _post_stop,
-        "/app/open-folder": _post_open_folder,
-        "/app/clear": _post_clear,
-        "/app/rescan": _post_rescan,
-        "/add": _post_add,
-    }
-
-    def do_POST(self):
-        parsed_url = urlsplit(self.path)
-        path = parsed_url.path
-        if path == "/app/session":
-            self._companion_session()
-            return
-        if path == "/app/upload":
-            self._upload_local_file(parsed_url.query)
-            return
-        if not self._allowed_request():
-            return
-        try:
-            payload = self._read_json_payload()
-            if payload is None:
-                return
-            handler = self._POST_ROUTES.get(path)
-            if handler is not None:
-                handler(self, payload)
-            elif path.startswith("/retry/"):
-                self._post_retry(unquote(path.removeprefix("/retry/")), payload)
-            elif path.startswith("/cancel/"):
-                self._post_cancel(unquote(path.removeprefix("/cancel/")), payload)
-            else:
-                self._json({"error": "not found"}, 404)
-        except (ValueError, InputError, UnicodeError) as exc:
-            self._json({"error": str(exc)}, 400)
-        except KeyError:
-            self._json({"error": "unknown job"}, 404)
-        except (OSError, QueueError) as exc:
-            self._json({"error": "Cannot persist request: %s" % exc}, 503)
-        except (RuntimeError, subprocess.SubprocessError) as exc:
-            self._json({"error": str(exc)}, 503)
-
-    def _companion_session(self):
-        if not self._allowed_request(auth=False, bootstrap=True):
-            return
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length <= 4096 or self.headers.get("Transfer-Encoding"):
-                raise ValueError("Invalid companion form length")
-            if self.headers.get("Content-Type", "").split(";")[0] != "application/x-www-form-urlencoded":
-                raise ValueError("Invalid companion form content type")
-            self.connection.settimeout(10)
-            values = parse_qs(self.rfile.read(length).decode("utf-8"),
-                              strict_parsing=True, max_num_fields=1)
-            if set(values) != {"ticket"} or len(values["ticket"]) != 1:
-                raise ValueError("Invalid companion form")
-            page, policy = self.app.ui.session_page(values["ticket"][0])
-            self._bytes(page, "text/html; charset=utf-8", policy=policy)
-        except (ValueError, UnicodeError) as exc:
-            self.close_connection = True
-            self._json({"error": str(exc)}, 400)
-
-    def _upload_local_file(self, query: str):
-        if not self._allowed_request():
-            return
-        try:
-            if not self.app.ui.enabled:
-                raise ValueError("Local file uploads require a loopback backend")
-            try:
-                length = int(self.headers.get("Content-Length", "0"))
-            except ValueError:
-                length = -1
-            if length <= 0 or length > 512 * 1024 * 1024 or self.headers.get("Transfer-Encoding"):
-                self.close_connection = True
-                self._json({"error": "invalid or oversized audio file upload (max 512 MB)"}, 400)
-                return
-            content_type = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
-            if content_type != "application/octet-stream" and not content_type.startswith("audio/"):
-                self.close_connection = True
-                self._json({"error": "Content-Type must be application/octet-stream or audio/*"}, 415)
-                return
-            values = parse_qs(query, strict_parsing=True, max_num_fields=1)
-            raw_name = values.get("name", [""])[0].strip()
-            if set(values) != {"name"} or not raw_name:
-                raise ValueError("Upload requires a ?name= filename query parameter")
-            basename = Path(raw_name).name
-            suffix = Path(basename).suffix.lower()
-            if suffix not in LOCAL_AUDIO_EXTENSIONS:
-                raise ValueError(
-                    "Unsupported audio file extension %r; use wav, mp3, flac, m4a, ogg, opus, aac, aiff, or wma"
-                    % (suffix or basename)
-                )
-            stem_part = sanitize_filename(Path(basename).stem)
-            safe_name = stem_part + suffix
-            uploads_root = self.app.state_dir / "uploads"
-            uploads_root.mkdir(parents=True, exist_ok=True)
-            self.connection.settimeout(60)
-            digest = hashlib.sha256()
-            temp_path = None
-            try:
-                with tempfile.NamedTemporaryFile(dir=uploads_root, prefix=".upload-", delete=False) as tmp:
-                    temp_path = Path(tmp.name)
-                    remaining = length
-                    while remaining > 0:
-                        chunk = self.rfile.read(min(_STREAM_CHUNK_SIZE, remaining))
-                        if not chunk:
-                            raise ValueError("Unexpected end of uploaded file stream")
-                        digest.update(chunk)
-                        tmp.write(chunk)
-                        remaining -= len(chunk)
-                    tmp.flush()
-                    os.fsync(tmp.fileno())
-                dest_dir = uploads_root / digest.hexdigest()[:16]
-                dest_dir.mkdir(parents=True, exist_ok=True)
-                dest_path = dest_dir / safe_name
-                os.replace(temp_path, dest_path)
-                temp_path = None
-            finally:
-                if temp_path is not None:
-                    temp_path.unlink(missing_ok=True)
-            self._json({"source": str(dest_path), "name": safe_name}, 200)
-        except (ValueError, UnicodeError) as exc:
-            self.close_connection = True
-            self._json({"error": str(exc)}, 400)
-        except OSError as exc:
-            self._json({"error": "Cannot store uploaded audio file: %s" % exc}, 503)
 
 
 def main(argv=None) -> int:
