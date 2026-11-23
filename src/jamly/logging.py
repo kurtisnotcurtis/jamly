@@ -85,7 +85,10 @@ class Logger:
         """Print an output file path as a clickable Windows link; plain elsewhere."""
         target = rel_path or path
         if os.path.isabs(target):
-            display = os.path.relpath(target, os.getcwd()) or target
+            try:
+                display = os.path.relpath(target, os.getcwd()) or target
+            except ValueError:
+                display = target
         else:
             display = target
         if sys.platform.startswith("win") and not self.quiet:

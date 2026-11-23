@@ -32,11 +32,21 @@ class LoggingTests(unittest.TestCase):
     def test_only_successful_results_are_linked(self):
         logger = self.capture()
         with patch("jamly.run._log", logger):
-            link_outputs(ItemResult("id", status="done", drums_path="/out/drums.wav",
-                                    nodrums_path="/out/no-drums.wav", meta_path="/out/metadata.json"))
-            link_outputs(ItemResult("bad", status="error", drums_path="/bad.wav"))
+            link_outputs(ItemResult(
+                "id", status="done",
+                stem_paths={"drums": "/out/drums.wav", "no_drums": "/out/no-drums.wav"},
+                meta_path="/out/metadata.json",
+            ))
+            link_outputs(ItemResult("bad", status="error", stem_paths={"drums": "/bad.wav"}))
         content = logger.stream.getvalue()
         self.assertIn("drums.wav", content)
         self.assertIn("no-drums.wav", content)
         self.assertIn("metadata.json", content)
         self.assertNotIn("bad.wav", content)
+
+    def test_link_handles_cross_drive_paths_on_windows(self):
+        logger = self.capture()
+        with patch("jamly.logging.os.path.isabs", return_value=True), \
+                patch("jamly.logging.os.path.relpath", side_effect=ValueError("path is on mount 'D:'")):
+            logger.link("D:\\exports\\track_drums.wav")
+        self.assertIn("D:\\exports\\track_drums.wav", logger.stream.getvalue())

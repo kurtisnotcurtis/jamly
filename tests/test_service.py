@@ -27,6 +27,7 @@ class ServiceDefinitionsTests(unittest.TestCase):
         with patch.dict(os.environ, {"XDG_CONFIG_HOME": "/configuration"}):
             path, unit = service.render_service("linux", python, settings, state, home=Path("/home"))
         self.assertIn('ExecStart="/installed path/python" "-m" "jamly.server"', unit.decode())
+        self.assertIn("KillMode=mixed", unit.decode())
         self.assertIn(str(settings), unit.decode())
         self.assertNotIn("PYTHONPATH", unit.decode())
         self.assertEqual(path.name, "jamly.service")

@@ -131,6 +131,8 @@ def run(args: Sequence[str], check: bool = False, capture: bool = True,
             except subprocess.TimeoutExpired:
                 continue
         result = RunResult(cmd, process.returncode, stdout or "", stderr or "")
+        if not result.ok:
+            check_cancelled(cancel_event)
         if check and not result.ok:
             raise RuntimeError("command failed (exit %d): %s" % (
                 result.returncode, result.stderr.strip() or cmd[0]))

@@ -41,7 +41,8 @@ def render_service(platform: str, python: str, config: PurePath, state: PurePath
             "[Unit]", "Description=Jamly local audio backend", "After=network.target", "",
             "[Service]", "Type=simple", "WorkingDirectory=" + _systemd_quote(str(state)),
             "ExecStart=" + " ".join(_systemd_quote(arg).replace("$", "$$") for arg in command),
-            "Restart=on-failure", "RestartSec=5", "", "[Install]", "WantedBy=default.target", "",
+            "KillMode=mixed", "Restart=on-failure", "RestartSec=5", "", "[Install]",
+            "WantedBy=default.target", "",
         ))
         return root / "systemd" / "user" / UNIT, content.encode()
     if platform == "darwin":
