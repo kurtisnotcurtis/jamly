@@ -11,8 +11,6 @@ import threading
 import time
 import warnings
 
-from .runtime import browser_assets
-
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; "
        "media-src 'self' blob:; "
        "form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
@@ -119,8 +117,7 @@ class CompanionUI:
             "/app/app.js": (web / "app.js", "text/javascript; charset=utf-8"),
             "/app/app.css": (web / "app.css", "text/css; charset=utf-8"),
             "/app/jamly.svg": (web / "jamly-mark.svg", "image/svg+xml"),
-            "/app/jamly_client.js": (browser_assets("extension") / "jamly_client.js",
-                                   "text/javascript; charset=utf-8"),
+            "/app/jamly_client.js": (web / "jamly_client.js", "text/javascript; charset=utf-8"),
         }
         if path not in assets:
             raise FileNotFoundError("Unknown companion asset")

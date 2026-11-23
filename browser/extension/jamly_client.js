@@ -75,8 +75,36 @@
     return url.href;
   }
 
+  function reconcileModelStem(stems, modelId, stemId, changed) {
+    let model = modelId;
+    let stem = stemId || "drums";
+    const stemChoice = (stems || []).find(item => item.id === stem);
+    if (stemChoice?.models && !stemChoice.models.includes(model)) {
+      if (changed === "stem") {
+        model = stemChoice.models[0];
+      } else {
+        stem = "drums";
+      }
+    }
+    return { model, stem };
+  }
+
+  function describeModelStem(models, stems, modelId, stemId) {
+    const stemValue = stemId || "drums";
+    const modelDescription = (models || []).find(item => item.id === modelId)?.description || "";
+    const stemChoice = (stems || []).find(item => item.id === stemValue);
+    const stemDescription = stemChoice?.description || "";
+    return {
+      modelDescription,
+      stemDescription,
+      helpText: modelDescription + (stemDescription ? " " + stemDescription : ""),
+      submitLabel: stemValue === "all" ? "Split all stems" : "Split " + stemValue,
+    };
+  }
+
   const client = {
     baseURL, outputURL, sourceURL, status, request,
+    reconcileModelStem, describeModelStem,
     health: config => request(config, "/healthz"),
     addInputs: (config, inputs, replace = false, options = {}) => request(config, "/add", "POST", {
       inputs, replace_existing: replace, model: options.model, audio_format: options.audio_format,

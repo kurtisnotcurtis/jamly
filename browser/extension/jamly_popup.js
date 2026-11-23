@@ -21,17 +21,14 @@
   }
 
   function modelHelp() {
-    const modelDesc = models.find(model => model.id === byId("model").value)?.description || "";
-    const stemValue = byId("stem")?.value || "drums";
-    const stemChoice = stems.find(stem => stem.id === stemValue);
-    const stemDesc = stemChoice?.description ? " " + stemChoice.description : "";
-    byId("model-help").textContent = modelDesc + stemDesc;
-    byId("model").title = modelDesc;
-    if (byId("stem") && stemChoice?.description) {
-      byId("stem").title = stemChoice.description;
+    const info = jamlyClient.describeModelStem(models, stems, byId("model").value, byId("stem")?.value);
+    byId("model-help").textContent = info.helpText;
+    byId("model").title = info.modelDescription;
+    if (byId("stem") && info.stemDescription) {
+      byId("stem").title = info.stemDescription;
     }
     if (byId("submit")) {
-      byId("submit").textContent = stemValue === "all" ? "Split all stems" : "Split " + stemValue;
+      byId("submit").textContent = info.submitLabel;
     }
   }
 
@@ -153,18 +150,14 @@
   byId("model").addEventListener("change", () => {
     const stemSelect = byId("stem");
     if (stemSelect) {
-      const stemChoice = stems.find(item => item.id === stemSelect.value);
-      if (stemChoice?.models && !stemChoice.models.includes(byId("model").value)) {
-        stemSelect.value = "drums";
-      }
+      const synced = jamlyClient.reconcileModelStem(stems, byId("model").value, stemSelect.value, "model");
+      stemSelect.value = synced.stem;
     }
     modelHelp();
   });
   byId("stem")?.addEventListener("change", () => {
-    const stemChoice = stems.find(item => item.id === byId("stem").value);
-    if (stemChoice?.models && !stemChoice.models.includes(byId("model").value)) {
-      byId("model").value = stemChoice.models[0];
-    }
+    const synced = jamlyClient.reconcileModelStem(stems, byId("model").value, byId("stem").value, "stem");
+    byId("model").value = synced.model;
     modelHelp();
   });
   byId("current").addEventListener("click", async () => {

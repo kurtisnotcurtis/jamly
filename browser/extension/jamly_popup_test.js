@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 const { test } = require("node:test");
+const client = require("./jamly_client.js");
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
 function popup(handler) {
@@ -19,6 +20,7 @@ function popup(handler) {
       .map(id => [id, element()])
   );
   const context = {
+    jamlyClient: client,
     document: { getElementById: id => elements[id], createElement: element },
     window: { addEventListener() {} },
     setTimeout() { return 1; }, clearTimeout() {},

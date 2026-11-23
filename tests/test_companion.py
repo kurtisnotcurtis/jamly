@@ -69,3 +69,24 @@ class CompanionLauncherTests(unittest.TestCase):
                 icon_bytes.decode("utf-8").replace("\r\n", "\n"),
                 repo_icon.read_text(encoding="utf-8").replace("\r\n", "\n"),
             )
+            client_bytes, client_type = ui.asset("/app/jamly_client.js")
+            repo_client = Path(__file__).resolve().parents[1] / "browser" / "extension" / "jamly_client.js"
+            self.assertEqual(client_type, "text/javascript; charset=utf-8")
+            self.assertEqual(
+                client_bytes.decode("utf-8").replace("\r\n", "\n"),
+                repo_client.read_text(encoding="utf-8").replace("\r\n", "\n"),
+            )
+
+    def test_browser_assets_falls_back_to_user_base_install(self):
+        with tempfile.TemporaryDirectory() as root:
+            base = Path(root)
+            fake_runtime = base / "site-packages" / "jamly" / "runtime.py"
+            fake_runtime.parent.mkdir(parents=True)
+            fake_runtime.write_text("", encoding="utf-8")
+            user_assets = base / "user-base" / "share" / "jamly" / "browser" / "extension"
+            user_assets.mkdir(parents=True)
+            with patch.object(runtime, "bundle_root", return_value=None), \
+                    patch.object(runtime, "__file__", str(fake_runtime)), \
+                    patch.object(runtime.sys, "prefix", str(base / "empty-prefix")), \
+                    patch.object(runtime.site, "USER_BASE", str(base / "user-base")):
+                self.assertEqual(runtime.browser_assets("extension"), user_assets)

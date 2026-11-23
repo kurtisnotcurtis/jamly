@@ -73,3 +73,24 @@ test("source URLs stay on the paired backend", () => {
   assert.throws(() => client.sourceURL(config, ""), /invalid source id/);
   assert.throws(() => client.sourceURL(config, undefined), /invalid source id/);
 });
+
+test("model and stem helpers keep selection and descriptions in sync", () => {
+  const models = [
+    { id: "htdemucs", description: "Fast 4-stem." },
+    { id: "htdemucs_6s", description: "6-stem." },
+  ];
+  const stems = [
+    { id: "drums", description: "Drums pair.", models: ["htdemucs", "htdemucs_6s"] },
+    { id: "guitar", description: "Guitar pair.", models: ["htdemucs_6s"] },
+    { id: "all", description: "All tracks.", models: ["htdemucs", "htdemucs_6s"] },
+  ];
+  assert.deepEqual(client.reconcileModelStem(stems, "htdemucs", "guitar", "stem"), {
+    model: "htdemucs_6s", stem: "guitar",
+  });
+  assert.deepEqual(client.reconcileModelStem(stems, "htdemucs", "guitar", "model"), {
+    model: "htdemucs", stem: "drums",
+  });
+  const desc = client.describeModelStem(models, stems, "htdemucs", "all");
+  assert.equal(desc.helpText, "Fast 4-stem. All tracks.");
+  assert.equal(desc.submitLabel, "Split all stems");
+});

@@ -1,11 +1,9 @@
 (function () {
   "use strict";
   const byId = id => document.getElementById(id);
-  chrome.storage.local.get([
-    "jamly_serverUrl", "jamly_serverToken", "ac_serverUrl", "ac_serverToken",
-  ]).then(stored => {
-    byId("url").value = stored.jamly_serverUrl || stored.ac_serverUrl || "http://127.0.0.1:8765";
-    byId("token").value = stored.jamly_serverToken || stored.ac_serverToken || "";
+  chrome.storage.local.get(["jamly_serverUrl", "jamly_serverToken"]).then(stored => {
+    byId("url").value = stored.jamly_serverUrl || "http://127.0.0.1:8765";
+    byId("token").value = stored.jamly_serverToken || "";
   });
 
   byId("save").addEventListener("click", async () => {

@@ -2,12 +2,10 @@
 importScripts("jamly_client.js");
 
 async function config() {
-  const stored = await chrome.storage.local.get([
-    "jamly_serverUrl", "jamly_serverToken", "ac_serverUrl", "ac_serverToken",
-  ]);
+  const stored = await chrome.storage.local.get(["jamly_serverUrl", "jamly_serverToken"]);
   return {
-    url: stored.jamly_serverUrl || stored.ac_serverUrl || "http://127.0.0.1:8765",
-    token: stored.jamly_serverToken || stored.ac_serverToken || "",
+    url: stored.jamly_serverUrl || "http://127.0.0.1:8765",
+    token: stored.jamly_serverToken || "",
   };
 }
 

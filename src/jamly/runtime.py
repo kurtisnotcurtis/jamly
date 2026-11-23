@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
+import site
 import subprocess
 import sys
 
@@ -28,12 +29,29 @@ def bundled_binary(name: str) -> Path | None:
 
 def browser_assets(kind: str) -> Path:
     root = bundle_root()
-    installed = (root or Path(sys.prefix)) / "share" / "jamly" / "browser" / kind
-    checkout = Path(__file__).resolve().parents[2] / "browser" / kind
-    source = checkout if root is None and checkout.is_dir() else installed
-    if not source.is_dir():
+    if root is not None:
+        source = root / "share" / "jamly" / "browser" / kind
+        if source.is_dir():
+            return source
         raise FileNotFoundError("Browser assets are missing; reinstall Jamly")
-    return source
+    here = Path(__file__).resolve()
+    candidates = [here.parents[2] / "browser" / kind]
+    prefixes = [Path(sys.prefix)]
+    user_base = getattr(site, "USER_BASE", None)
+    if user_base:
+        prefixes.append(Path(user_base))
+    # Also check ancestor prefixes of this installed module (covers --user and custom --target prefixes).
+    prefixes.extend(here.parents)
+    seen = set()
+    for prefix in prefixes:
+        candidate = prefix / "share" / "jamly" / "browser" / kind
+        if candidate not in seen:
+            seen.add(candidate)
+            candidates.append(candidate)
+    for source in candidates:
+        if source.is_dir():
+            return source
+    raise FileNotFoundError("Browser assets are missing; reinstall Jamly")
 
 
 def open_directory(path: Path) -> None:
