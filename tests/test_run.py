@@ -111,11 +111,14 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(original.exists(), "retained original was not persisted beside the stems")
         self.assertEqual(sf.info(original).subtype, "FLOAT")
         manifest = outputs.read_manifest(Path(result.meta_path).parent)
-        self.assertEqual(manifest["original"], str(original))
+        self.assertEqual(manifest["original"], original.name)
         # A cache hit (skipped) still exposes the retained original path from manifest["original"].
         skipped = self.process()
         self.assertEqual(skipped.status, "skipped")
         self.assertEqual(skipped.source_path, str(original))
+        # Legacy absolute paths in manifest["original"] continue to resolve cleanly.
+        legacy = run._resolve_manifest_original(Path(result.meta_path).parent, {"original": str(original)})
+        self.assertEqual(legacy, str(original))
 
     def test_valid_existing_pair_is_reusable_without_network_or_dependencies(self):
         first = self.process()

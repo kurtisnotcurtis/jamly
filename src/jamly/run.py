@@ -294,6 +294,55 @@ def _persist_original(audio: Path, target: Path) -> str:
     return str(target)
 
 
+def _resolve_output_dir(wid: str, args) -> tuple[str, str, Path]:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", wid):
+        raise ValueError("Invalid stable input id")
+    if args.audio_format not in ("mp3", "wav"):
+        raise ValueError("Unsupported audio format")
+    model = validate_model(getattr(args, "model", DEFAULT_MODEL))
+    stem = validate_stem(getattr(args, "stem", DEFAULT_STEM), model)
+    out_root = Path(args.output_dir).expanduser().absolute()
+    base_dir = out_root / ".jamly" / wid / model
+    directory = (base_dir if stem == DEFAULT_STEM else base_dir / stem) / args.audio_format
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    return model, stem, directory
+
+
+def _resolve_tools(args) -> tuple[str, str, str]:
+    ffmpeg_dir = detect_ffmpeg(
+        ffmpeg_dirs=[args.ffmpeg_dir] if getattr(args, "ffmpeg_dir", None) else []
+    ).path
+    if not ffmpeg_dir:
+        raise RuntimeError("Install ffmpeg and ffprobe on PATH; run jamly-doctor for details")
+    if not detect_engine():
+        raise RuntimeError("Demucs is missing; reinstall Jamly")
+    exe_suffix = ".exe" if os.name == "nt" else ""
+    ffmpeg = str(Path(ffmpeg_dir) / ("ffmpeg" + exe_suffix))
+    ffprobe = str(Path(ffmpeg_dir) / ("ffprobe" + exe_suffix))
+    return ffmpeg_dir, ffmpeg, ffprobe
+
+
+def _write_manifest(meta_path: Path, *, wid: str, source: str, metadata: dict, parsed,
+                    model: str, stem: str, audio_format: str, audio_info: dict,
+                    destinations: dict[str, Path], orig_target: Path | None) -> dict:
+    manifest = dict(
+        meta_dict(watch_id=wid, source_url=source, title=metadata.get("title"),
+                  artist=metadata.get("artist") or (parsed[0] if parsed else None),
+                  uploader=metadata.get("uploader"), duration=metadata.get("duration_seconds")),
+        processing_version=PROCESSING_VERSION, generation=uuid.uuid4().hex,
+        model=model, stem=stem, format=audio_format, audio=audio_info,
+        outputs={name: {"file": path.name, "sha256": checksum(path)}
+                 for name, path in destinations.items()},
+    )
+    if orig_target is not None:
+        manifest["original"] = orig_target.name
+    with meta_path.open("w", encoding="utf-8") as file:
+        json.dump(manifest, file, ensure_ascii=False, indent=2)
+        file.flush()
+        os.fsync(file.fileno())
+    return manifest
+
+
 def process_one(wid: str, args, progress=None, source_url=None, cancel_event=None) -> ItemResult:
     result = ItemResult(wid)
     source = source_url or wid
@@ -305,16 +354,7 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
             progress(wid, name, 0, 0)
 
     try:
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", wid):
-            raise ValueError("Invalid stable input id")
-        if args.audio_format not in ("mp3", "wav"):
-            raise ValueError("Unsupported audio format")
-        model = validate_model(getattr(args, "model", DEFAULT_MODEL))
-        stem = validate_stem(getattr(args, "stem", DEFAULT_STEM), model)
-        out_root = Path(args.output_dir).expanduser().absolute()
-        base_dir = out_root / ".jamly" / wid / model
-        directory = (base_dir if stem == DEFAULT_STEM else base_dir / stem) / args.audio_format
-        directory.parent.mkdir(parents=True, exist_ok=True)
+        model, stem, directory = _resolve_output_dir(wid, args)
         local_source = local_audio_path(source)
         with _output_lock(directory, cancel_event):
             recover_directory(directory)
@@ -326,17 +366,10 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
                                                 local_source=local_source)
 
         stage("metadata")
-        ffmpeg_dir = detect_ffmpeg(
-            ffmpeg_dirs=[args.ffmpeg_dir] if getattr(args, "ffmpeg_dir", None) else []
-        ).path
-        if not ffmpeg_dir:
-            raise RuntimeError("Install ffmpeg and ffprobe on PATH; run jamly-doctor for details")
-        ffmpeg = str(Path(ffmpeg_dir) / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg"))
-        ffprobe = str(Path(ffmpeg_dir) / ("ffprobe.exe" if os.name == "nt" else "ffprobe"))
-        if not detect_engine():
-            raise RuntimeError("Demucs is missing; reinstall Jamly")
+        ffmpeg_dir, ffmpeg, ffprobe = _resolve_tools(args)
         if local_source is not None:
             metadata = _fetch_local_metadata(ffprobe, local_source, cancel_event)
+            command = None
         else:
             command = ytdlp_command()
             metadata = _fetch_item_metadata(command, source, cancel_event)
@@ -349,12 +382,11 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
         ) as staged:
             workdir, staged_dir = Path(work), Path(staged)
             stage("download")
-            if local_source is not None:
-                audio = local_source
-            else:
-                audio = download_audio(
+            audio = (
+                local_source if local_source is not None else download_audio(
                     build_download_cmd(command, wid, work, source, ffmpeg_dir), workdir, cancel_event
                 )
+            )
             stage("separate")
             stems = separate_stems(
                 str(audio), work, args.threads,
@@ -375,27 +407,19 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
                     Path(audio_directory(directory))
                     / ("%s_original%s" % (_stem_file_prefix(wid, parsed), orig_ext))
                 )
-            manifest = dict(
-                meta_dict(watch_id=wid, source_url=source, title=metadata.get("title"),
-                          artist=metadata.get("artist") or (parsed[0] if parsed else None),
-                          uploader=metadata.get("uploader"), duration=metadata.get("duration_seconds")),
-                processing_version=PROCESSING_VERSION, generation=uuid.uuid4().hex,
-                model=model, stem=stem, format=args.audio_format, audio=audio_info,
-                outputs={name: {"file": path.name, "sha256": checksum(path)}
-                         for name, path in destinations.items()},
+            manifest = _write_manifest(
+                Path(meta), wid=wid, source=source, metadata=metadata, parsed=parsed,
+                model=model, stem=stem, audio_format=args.audio_format, audio_info=audio_info,
+                destinations=destinations, orig_target=orig_target,
             )
-            if orig_target is not None:
-                manifest["original"] = str(orig_target)
-            with Path(meta).open("w", encoding="utf-8") as file:
-                json.dump(manifest, file, ensure_ascii=False, indent=2)
-                file.flush()
-                os.fsync(file.fileno())
             stage("publish")
             with _output_lock(directory, cancel_event):
                 publish_directory(staged_dir, directory)
-                retained = None
-                if orig_target is not None and audio is not None and Path(audio).exists():
-                    retained = _persist_original(Path(audio), orig_target)
+                retained = (
+                    _persist_original(Path(audio), orig_target)
+                    if orig_target is not None and audio is not None and Path(audio).exists()
+                    else None
+                )
             result = result_from_manifest(wid, directory, manifest, "done", local_source=local_source)
             if retained is not None:
                 result.source_path = retained

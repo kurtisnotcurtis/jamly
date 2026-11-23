@@ -138,7 +138,7 @@ class AccessorsTests(unittest.TestCase):
         self.assertIn("status", recs["vid123"])
         q.finish("vid123", "done")
         self.assertEqual(len(q.items), 1)
-        self.assertEqual(q.items[0]["status"], WatchQueue.DONE)
+        self.assertEqual(q.items[0]["status"], "done")
         self.assertIn("vid123", q.done_ids())
 
 

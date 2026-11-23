@@ -13,6 +13,8 @@ import uuid
 
 from filelock import FileLock, Timeout
 
+from .models import DEFAULT_MODEL, DEFAULT_STEM
+
 
 class QueueError(RuntimeError):
     pass
@@ -36,8 +38,6 @@ def queue_owner(path: str):
 
 
 class WatchQueue:
-    PENDING = "pending"
-    DONE = "done"
     STATUSES = {"pending", "running", "done", "skipped", "error", "cancelled"}
 
     def __init__(self, path: str = "", items=None, *, _shared: bool = False):
@@ -176,9 +176,47 @@ class WatchQueue:
     def _export_key(model: str, stem: str, audio_format: str) -> str:
         return (
             "%s/%s" % (model, audio_format)
-            if stem == "drums"
+            if stem == DEFAULT_STEM
             else "%s/%s/%s" % (model, stem, audio_format)
         )
+
+    @staticmethod
+    def _new_restored_entry(watch_id: str, *, source_url: str | None, original_path: str | None,
+                            title: str | None, model: str, stem: str, audio_format: str,
+                            outputs: dict[str, str], generation: str, finished_at: float | None,
+                            export_key: str, export_entry: dict) -> dict:
+        return {
+            "watch_id": watch_id,
+            "source_url": source_url or watch_id,
+            "original_path": original_path,
+            "title": title,
+            "status": "done",
+            "error": None,
+            "outputs": dict(outputs),
+            "generation": generation,
+            "exports": {export_key: export_entry},
+            "options": {"model": model, "stem": stem, "audio_format": audio_format},
+            "attempts": 1,
+            "requested_at": None,
+            "started_at": None,
+            "finished_at": finished_at,
+            "duration_seconds": None,
+            "updated_at": finished_at or time.time(),
+        }
+
+    @staticmethod
+    def _should_promote_export(entry: dict, *, model: str, stem: str, audio_format: str, generation: str) -> bool:
+        if entry["status"] in ("pending", "running"):
+            return False
+        if not entry.get("outputs"):
+            return True
+        opts = entry.get("options") or {}
+        same_selection = (
+            opts.get("model", DEFAULT_MODEL) == model
+            and opts.get("stem", DEFAULT_STEM) == stem
+            and opts.get("audio_format", "mp3") == audio_format
+        )
+        return same_selection and entry.get("generation") != generation
 
     def restore_export(
         self,
@@ -187,8 +225,8 @@ class WatchQueue:
         source_url: str | None = None,
         original_path: str | None = None,
         title: str | None = None,
-        model: str = "htdemucs",
-        stem: str = "drums",
+        model: str = DEFAULT_MODEL,
+        stem: str = DEFAULT_STEM,
         audio_format: str = "mp3",
         outputs: dict[str, str],
         generation: str,
@@ -197,33 +235,18 @@ class WatchQueue:
         if not re.fullmatch(r"[A-Za-z0-9_-]+", watch_id):
             raise ValueError("invalid stable id")
         export_key = self._export_key(model, stem, audio_format)
-        entry = {
-            "model": model,
-            "stem": stem,
-            "audio_format": audio_format,
-            "outputs": dict(outputs),
-            "generation": generation,
+        export_entry = {
+            "model": model, "stem": stem, "audio_format": audio_format,
+            "outputs": dict(outputs), "generation": generation,
         }
         existing = self._by_id.get(watch_id)
         if existing is None:
-            new_entry = {
-                "watch_id": watch_id,
-                "source_url": source_url or watch_id,
-                "original_path": original_path,
-                "title": title,
-                "status": "done",
-                "error": None,
-                "outputs": dict(outputs),
-                "generation": generation,
-                "exports": {export_key: entry},
-                "options": {"model": model, "stem": stem, "audio_format": audio_format},
-                "attempts": 1,
-                "requested_at": None,
-                "started_at": None,
-                "finished_at": finished_at,
-                "duration_seconds": None,
-                "updated_at": finished_at or time.time(),
-            }
+            new_entry = self._new_restored_entry(
+                watch_id, source_url=source_url, original_path=original_path, title=title,
+                model=model, stem=stem, audio_format=audio_format, outputs=outputs,
+                generation=generation, finished_at=finished_at,
+                export_key=export_key, export_entry=export_entry,
+            )
             self._index[watch_id] = len(self._items)
             self._items.append(new_entry)
             self._by_id[watch_id] = new_entry
@@ -231,8 +254,8 @@ class WatchQueue:
         updated = copy.deepcopy(existing)
         changed = False
         exports = dict(updated.get("exports") or {})
-        if exports.get(export_key) != entry:
-            exports[export_key] = entry
+        if exports.get(export_key) != export_entry:
+            exports[export_key] = export_entry
             updated["exports"] = exports
             changed = True
         if title and not updated.get("title"):
@@ -247,24 +270,14 @@ class WatchQueue:
         if finished_at and updated.get("finished_at") is None and updated["status"] in ("done", "skipped"):
             updated["finished_at"] = finished_at
             changed = True
-        if updated["status"] not in ("pending", "running"):
-            opts = updated.get("options") or {}
-            same_selection = (
-                opts.get("model", "htdemucs") == model
-                and opts.get("stem", "drums") == stem
-                and opts.get("audio_format", "mp3") == audio_format
+        if self._should_promote_export(updated, model=model, stem=stem, audio_format=audio_format, generation=generation):
+            updated.update(
+                status="done", error=None, outputs=dict(outputs), generation=generation,
+                options={"model": model, "stem": stem, "audio_format": audio_format},
+                finished_at=finished_at if finished_at is not None else updated.get("finished_at"),
+                updated_at=finished_at or time.time(),
             )
-            if not updated.get("outputs") or (same_selection and updated.get("generation") != generation):
-                updated.update(
-                    status="done",
-                    error=None,
-                    outputs=dict(outputs),
-                    generation=generation,
-                    options={"model": model, "stem": stem, "audio_format": audio_format},
-                    finished_at=finished_at if finished_at is not None else updated.get("finished_at"),
-                    updated_at=finished_at or time.time(),
-                )
-                changed = True
+            changed = True
         if changed:
             idx = self._index[watch_id]
             self._items[idx] = updated
@@ -310,8 +323,8 @@ class WatchQueue:
             item["generation"] = generation
         if status in ("done", "skipped") and item.get("outputs") and item.get("generation"):
             opts = item.get("options") or {}
-            model = opts.get("model", "htdemucs")
-            stem = opts.get("stem", "drums")
+            model = opts.get("model", DEFAULT_MODEL)
+            stem = opts.get("stem", DEFAULT_STEM)
             audio_format = opts.get("audio_format", "mp3")
             exports = dict(item.get("exports") or {})
             export_key = self._export_key(model, stem, audio_format)

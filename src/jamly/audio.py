@@ -17,67 +17,53 @@ BLOCK_FRAMES = 65536
 
 def mix_pair(stems: dict[str, str], workdir: Path, cancel_event=None, *,
              target_stem: str = "drums") -> tuple[dict, dict]:
-    if target_stem == "all":
-        if len(stems) < 2:
+    export_all = target_stem == "all"
+    if len(stems) < 2 or (not export_all and target_stem not in stems):
+        if export_all:
             raise ValueError("At least two stems are required")
-        paths = {name: Path(path) for name, path in stems.items()}
-        peak = 0.0
-        with ExitStack() as stack:
-            inputs = {name: stack.enter_context(sf.SoundFile(path)) for name, path in stems.items()}
-            reference = next(iter(inputs.values()))
-            shape = (reference.frames, reference.samplerate, reference.channels)
-            if not reference.frames:
-                raise ValueError("The separator produced empty audio")
-            if any((file.frames, file.samplerate, file.channels) != shape for file in inputs.values()):
-                raise ValueError("Separated stems have different lengths, sample rates, or channels")
-            while True:
-                check_cancelled(cancel_event)
-                blocks = {name: file.read(BLOCK_FRAMES, dtype="float64", always_2d=True)
-                          for name, file in inputs.items()}
-                first_block = next(iter(blocks.values()))
-                if not len(first_block):
-                    break
-                if not all(np.isfinite(block).all() for block in blocks.values()):
-                    raise ValueError("The separator produced non-finite samples")
-                peak = max(peak, *(float(np.abs(block).max()) for block in blocks.values()))
-        return paths, {"frames": shape[0], "sample_rate": shape[1], "channels": shape[2],
-                       "unscaled_peak": peak}
-
-    if target_stem not in stems or len(stems) < 2:
         if target_stem == "drums":
             raise ValueError("A drums stem and at least one non-drum stem are required")
         raise ValueError("A %s stem and at least one other stem are required" % target_stem)
     complement = "no_" + target_stem
-    paths = {
-        target_stem: workdir / ("pair-" + target_stem + ".wav"),
-        complement: workdir / ("pair-no-" + target_stem + ".wav"),
-    }
+    paths = (
+        {name: Path(path) for name, path in stems.items()}
+        if export_all
+        else {
+            target_stem: workdir / ("pair-" + target_stem + ".wav"),
+            complement: workdir / ("pair-no-" + target_stem + ".wav"),
+        }
+    )
     peak = 0.0
     with ExitStack() as stack:
         inputs = {name: stack.enter_context(sf.SoundFile(path)) for name, path in stems.items()}
-        reference = inputs[target_stem]
+        reference = next(iter(inputs.values())) if export_all else inputs[target_stem]
         shape = (reference.frames, reference.samplerate, reference.channels)
         if not reference.frames:
             raise ValueError("The separator produced empty audio")
         if any((file.frames, file.samplerate, file.channels) != shape for file in inputs.values()):
             raise ValueError("Separated stems have different lengths, sample rates, or channels")
-        outputs = {
-            name: stack.enter_context(sf.SoundFile(
-                path, "w", samplerate=shape[1], channels=shape[2], subtype="FLOAT"
-            )) for name, path in paths.items()
-        }
+        outputs = (
+            None if export_all else {
+                name: stack.enter_context(sf.SoundFile(
+                    path, "w", samplerate=shape[1], channels=shape[2], subtype="FLOAT"
+                )) for name, path in paths.items()
+            }
+        )
         while True:
             check_cancelled(cancel_event)
             blocks = {name: file.read(BLOCK_FRAMES, dtype="float64", always_2d=True)
                       for name, file in inputs.items()}
-            if not len(blocks[target_stem]):
+            if not len(next(iter(blocks.values()))):
                 break
             if not all(np.isfinite(block).all() for block in blocks.values()):
                 raise ValueError("The separator produced non-finite samples")
-            backing = sum(block for name, block in blocks.items() if name != target_stem)
-            peak = max(peak, float(np.abs(blocks[target_stem]).max()), float(np.abs(backing).max()))
-            outputs[target_stem].write(blocks[target_stem])
-            outputs[complement].write(backing)
+            if export_all:
+                peak = max(peak, *(float(np.abs(block).max()) for block in blocks.values()))
+            else:
+                backing = sum(block for name, block in blocks.items() if name != target_stem)
+                peak = max(peak, float(np.abs(blocks[target_stem]).max()), float(np.abs(backing).max()))
+                outputs[target_stem].write(blocks[target_stem])
+                outputs[complement].write(backing)
     return paths, {"frames": shape[0], "sample_rate": shape[1], "channels": shape[2],
                    "unscaled_peak": peak}
 
