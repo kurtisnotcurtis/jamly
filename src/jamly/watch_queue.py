@@ -13,15 +13,9 @@ import uuid
 
 from filelock import FileLock, Timeout
 
-from .config import state_directory
-
 
 class QueueError(RuntimeError):
     pass
-
-
-def default_queue_path(scope_dir: str = "") -> str:
-    return str(state_directory(scope_dir or None) / "jamly_queue.json")
 
 
 @contextmanager
@@ -46,16 +40,22 @@ class WatchQueue:
     DONE = "done"
     STATUSES = {"pending", "running", "done", "skipped", "error", "cancelled"}
 
-    def __init__(self, path: str = "", items=None, done=None):
+    def __init__(self, path: str = "", items=None, *, _shared: bool = False):
         self.path = str(Path(path).absolute()) if path else ""
-        self._items = copy.deepcopy(items or [])
+        self._items = list(items or []) if _shared else copy.deepcopy(items or [])
         self._by_id = {item["watch_id"]: item for item in self._items}
+        self._index = {item["watch_id"]: idx for idx, item in enumerate(self._items)}
         self._revision = 0
         self._save_lock = threading.Lock()
-        for wid in done or []:
-            if wid not in self._by_id:
-                self.add(wid)
-            self.mark_done(wid)
+
+    def _clone_entry(self, watch_id: str) -> dict | None:
+        idx = self._index.get(watch_id)
+        if idx is None:
+            return None
+        cloned = copy.deepcopy(self._items[idx])
+        self._items[idx] = cloned
+        self._by_id[watch_id] = cloned
+        return cloned
 
     @classmethod
     def from_path(cls, path: str) -> "WatchQueue":
@@ -89,6 +89,9 @@ class WatchQueue:
                 source = record.get("source_url") or wid
                 if not isinstance(source, str):
                     raise ValueError("source_url must be a string")
+                original_path = record.get("original_path")
+                if original_path is not None and not isinstance(original_path, str):
+                    raise ValueError("original_path must be a string")
                 options = record.get("options", {})
                 if not isinstance(options, dict):
                     raise ValueError("job options must be an object")
@@ -96,9 +99,10 @@ class WatchQueue:
                 if not isinstance(exports, dict):
                     raise ValueError("job exports must be an object")
                 entry = dict(
-                    record, watch_id=wid, source_url=source, status=status,
-                    options=options, exports=exports, title=record.get("title"),
+                    record, watch_id=wid, source_url=source, original_path=original_path,
+                    status=status, options=options, exports=exports, title=record.get("title"),
                 )
+                queue._index[wid] = len(queue._items)
                 queue._items.append(entry)
                 queue._by_id[wid] = entry
         except (OSError, ValueError, TypeError) as exc:
@@ -113,21 +117,25 @@ class WatchQueue:
         if previous is not None:
             if previous["status"] in ("pending", "running") or not retry:
                 return False
-            previous.update(status="pending", error=None, outputs={}, generation=None,
-                            source_url=source_url or previous["source_url"],
-                            options=copy.deepcopy(options if options is not None else previous["options"]),
-                            requested_at=now, started_at=None, finished_at=None,
-                            duration_seconds=None, updated_at=now)
+            updated = self._clone_entry(watch_id)
+            updated.update(
+                status="pending", error=None, outputs={}, generation=None,
+                source_url=source_url or updated["source_url"],
+                options=copy.deepcopy(options if options is not None else updated["options"]),
+                requested_at=now, started_at=None, finished_at=None,
+                duration_seconds=None, updated_at=now,
+            )
             if title:
-                previous["title"] = title
+                updated["title"] = title
             return True
         entry = {
-            "watch_id": watch_id, "source_url": source_url or watch_id, "title": title,
-            "status": "pending", "error": None, "outputs": {}, "exports": {},
+            "watch_id": watch_id, "source_url": source_url or watch_id, "original_path": None,
+            "title": title, "status": "pending", "error": None, "outputs": {}, "exports": {},
             "options": copy.deepcopy(options or {}),
             "attempts": 0, "requested_at": now, "started_at": None,
             "finished_at": None, "duration_seconds": None, "updated_at": now,
         }
+        self._index[watch_id] = len(self._items)
         self._items.append(entry)
         self._by_id[watch_id] = entry
         return True
@@ -145,7 +153,7 @@ class WatchQueue:
         return copy.deepcopy(item) if item is not None else default
 
     def copy(self) -> "WatchQueue":
-        result = WatchQueue(self.path, items=self.items)
+        result = WatchQueue(self.path, items=self._items, _shared=True)
         result._revision = self._revision
         return result
 
@@ -154,12 +162,14 @@ class WatchQueue:
             return False
         self._by_id.pop(watch_id, None)
         self._items = [item for item in self._items if item["watch_id"] != watch_id]
+        self._index = {item["watch_id"]: idx for idx, item in enumerate(self._items)}
         return True
 
     def clear_terminal(self) -> int:
         before = len(self._items)
         self._items = [item for item in self._items if item["status"] in ("pending", "running")]
         self._by_id = {item["watch_id"]: item for item in self._items}
+        self._index = {item["watch_id"]: idx for idx, item in enumerate(self._items)}
         return before - len(self._items)
 
     @staticmethod
@@ -175,6 +185,7 @@ class WatchQueue:
         watch_id: str,
         *,
         source_url: str | None = None,
+        original_path: str | None = None,
         title: str | None = None,
         model: str = "htdemucs",
         stem: str = "drums",
@@ -198,6 +209,7 @@ class WatchQueue:
             new_entry = {
                 "watch_id": watch_id,
                 "source_url": source_url or watch_id,
+                "original_path": original_path,
                 "title": title,
                 "status": "done",
                 "error": None,
@@ -212,42 +224,51 @@ class WatchQueue:
                 "duration_seconds": None,
                 "updated_at": finished_at or time.time(),
             }
+            self._index[watch_id] = len(self._items)
             self._items.append(new_entry)
             self._by_id[watch_id] = new_entry
             return True
+        updated = copy.deepcopy(existing)
         changed = False
-        exports = dict(existing.get("exports") or {})
+        exports = dict(updated.get("exports") or {})
         if exports.get(export_key) != entry:
             exports[export_key] = entry
-            existing["exports"] = exports
+            updated["exports"] = exports
             changed = True
-        if title and not existing.get("title"):
-            existing["title"] = title
+        if title and not updated.get("title"):
+            updated["title"] = title
             changed = True
-        if source_url and existing.get("source_url") == watch_id and source_url != watch_id:
-            existing["source_url"] = source_url
+        if source_url and updated.get("source_url") == watch_id and source_url != watch_id:
+            updated["source_url"] = source_url
             changed = True
-        if finished_at and existing.get("finished_at") is None and existing["status"] in ("done", "skipped"):
-            existing["finished_at"] = finished_at
+        if original_path and not updated.get("original_path"):
+            updated["original_path"] = original_path
             changed = True
-        if existing["status"] not in ("pending", "running"):
-            opts = existing.get("options") or {}
+        if finished_at and updated.get("finished_at") is None and updated["status"] in ("done", "skipped"):
+            updated["finished_at"] = finished_at
+            changed = True
+        if updated["status"] not in ("pending", "running"):
+            opts = updated.get("options") or {}
             same_selection = (
                 opts.get("model", "htdemucs") == model
                 and opts.get("stem", "drums") == stem
                 and opts.get("audio_format", "mp3") == audio_format
             )
-            if not existing.get("outputs") or (same_selection and existing.get("generation") != generation):
-                existing.update(
+            if not updated.get("outputs") or (same_selection and updated.get("generation") != generation):
+                updated.update(
                     status="done",
                     error=None,
                     outputs=dict(outputs),
                     generation=generation,
                     options={"model": model, "stem": stem, "audio_format": audio_format},
-                    finished_at=finished_at if finished_at is not None else existing.get("finished_at"),
+                    finished_at=finished_at if finished_at is not None else updated.get("finished_at"),
                     updated_at=finished_at or time.time(),
                 )
                 changed = True
+        if changed:
+            idx = self._index[watch_id]
+            self._items[idx] = updated
+            self._by_id[watch_id] = updated
         return changed
 
     def mark_running(self, watch_id: str) -> None:
@@ -263,10 +284,10 @@ class WatchQueue:
                 item["requested_at"] = now
 
     def finish(self, watch_id: str, status: str, *, error=None, outputs=None,
-               title=None, generation=None, source_url=None) -> None:
+               title=None, generation=None, original_path=None) -> None:
         if status not in self.STATUSES:
             raise ValueError("unknown job status")
-        item = self._by_id.get(watch_id)
+        item = self._clone_entry(watch_id)
         if item is None:
             raise QueueError("Unknown job: %s" % watch_id)
         now = time.time()
@@ -283,8 +304,8 @@ class WatchQueue:
             item["outputs"] = dict(outputs)
         if title:
             item["title"] = title
-        if source_url:
-            item["source_url"] = source_url
+        if original_path:
+            item["original_path"] = original_path
         if generation is not None:
             item["generation"] = generation
         if status in ("done", "skipped") and item.get("outputs") and item.get("generation"):
@@ -303,23 +324,14 @@ class WatchQueue:
             }
             item["exports"] = exports
 
-    def mark_done(self, watch_id: str) -> None:
-        self.finish(watch_id, "done")
-
-    def is_complete(self, watch_id: str) -> bool:
-        return watch_id in self.done_ids()
-
     def done_ids(self) -> list[str]:
         return [item["watch_id"] for item in self._items if item["status"] in ("done", "skipped")]
 
     def pending_ids(self) -> list[str]:
-        return [item["watch_id"] for item in self.pending_items()]
+        return [item["watch_id"] for item in self._items if item["status"] == "pending"]
 
     def pending_items(self) -> list[dict]:
         return [copy.deepcopy(item) for item in self._items if item["status"] == "pending"]
-
-    def count_pending(self) -> int:
-        return len(self.pending_ids())
 
     @property
     def items(self) -> list[dict]:
@@ -340,8 +352,7 @@ class WatchQueue:
             if current.get("revision", 0) != self._revision:
                 raise QueueError("Queue changed in another process; refusing to overwrite newer jobs")
             next_revision = self._revision + 1
-            data = {"items": self.items, "done": self.done_ids(), "revision": next_revision,
-                    "updated_at": time.time()}
+            data = {"revision": next_revision, "updated_at": time.time(), "items": self._items}
             temporary = path.with_name(path.name + ".tmp-" + uuid.uuid4().hex)
             try:
                 with temporary.open("w", encoding="utf-8") as file:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import os
@@ -10,9 +11,10 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 import uuid
 
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
 from .audio import render_pair
 from .bootstrap import detect_ffmpeg, ytdlp_command, ytdlp_options
@@ -33,6 +35,7 @@ from .watch_queue import QueueError, WatchQueue, queue_owner
 
 _log = Logger()
 METADATA_FETCH_TIMEOUT = 60
+OUTPUT_LOCK_TIMEOUT = 10.0
 
 
 @dataclass
@@ -41,8 +44,6 @@ class ItemResult:
     title: str | None = None
     status: str = "pending"
     stage: str = ""
-    drums_path: str | None = None
-    nodrums_path: str | None = None
     meta_path: str | None = None
     error: str | None = None
     generation: str | None = None
@@ -59,14 +60,10 @@ class ItemResult:
 
     @property
     def outputs(self) -> dict[str, str]:
-        if self.stem_paths:
-            result = dict(self.stem_paths)
-            if self.meta_path:
-                result["metadata"] = self.meta_path
-            return result
-        return {name: path for name, path in (
-            ("drums", self.drums_path), ("no_drums", self.nodrums_path), ("metadata", self.meta_path)
-        ) if path}
+        result = dict(self.stem_paths or {})
+        if self.meta_path:
+            result["metadata"] = self.meta_path
+        return result
 
 
 def build_download_cmd(ytdlp_exe, watch_id: str, workdir: str,
@@ -178,20 +175,23 @@ def download_audio(command: list[str], workdir: Path, cancel_event=None) -> Path
     return outputs[0]
 
 
-def _stem_file_prefix(watch_id: str, parsed=None, *, model: str = DEFAULT_MODEL) -> str:
+def _stem_file_prefix(watch_id: str, parsed=None, *, model: str = DEFAULT_MODEL,
+                      stem: str = DEFAULT_STEM) -> str:
     safe_id = sanitize_filename(watch_id)
     prefix = sanitize_filename(stem_prefix(watch_id, parsed))
     model_tag = (" [%s]" % model) if model != DEFAULT_MODEL else ""
+    stem_tag = " [all]" if stem == "all" else ""
+    tags = model_tag + stem_tag
     if parsed:
-        budget = 180 - len(safe_id.encode("utf-8")) - len(model_tag.encode("utf-8")) - 3
+        budget = 180 - len(safe_id.encode("utf-8")) - len(tags.encode("utf-8")) - 3
         prefix = prefix.encode("utf-8")[:budget].decode("utf-8", "ignore").rstrip()
         prefix += " [%s]" % safe_id
-    return prefix + model_tag
+    return prefix + tags
 
 
 def stem_destination_paths(output_dir: str, watch_id: str, fmt: str, parsed=None, *,
                            stem: str = DEFAULT_STEM, model: str = DEFAULT_MODEL) -> tuple[dict[str, Path], Path]:
-    prefix = _stem_file_prefix(watch_id, parsed, model=model)
+    prefix = _stem_file_prefix(watch_id, parsed, model=model, stem=stem)
     directory = Path(output_dir)
     destinations = {
         kind: directory / (prefix + "_" + kind + "." + fmt)
@@ -200,16 +200,30 @@ def stem_destination_paths(output_dir: str, watch_id: str, fmt: str, parsed=None
     return destinations, directory / "metadata.json"
 
 
-def result_from_manifest(wid: str, directory: Path, manifest: dict, status: str) -> ItemResult:
+def _resolve_manifest_original(directory: Path, manifest: dict) -> str | None:
+    recorded = manifest.get("original")
+    if not isinstance(recorded, str) or not recorded.strip():
+        return None
+    candidate = Path(recorded)
+    if not candidate.is_absolute():
+        candidate = audio_directory(directory) / recorded
+    if candidate.is_file() and not candidate.is_symlink():
+        return str(candidate)
+    return None
+
+
+def result_from_manifest(wid: str, directory: Path, manifest: dict, status: str, *,
+                         local_source: Path | None = None) -> ItemResult:
     outputs_map = manifest.get("outputs", {})
     stem_paths = {kind: str(resolve_output_path(directory, rec["file"]))
                   for kind, rec in outputs_map.items()}
+    source_path = _resolve_manifest_original(directory, manifest)
+    if source_path is None and local_source is not None and local_source.is_file() and not local_source.is_symlink():
+        source_path = str(local_source)
     return ItemResult(
         wid, title=manifest.get("title") or wid, status=status,
-        drums_path=stem_paths.get("drums"),
-        nodrums_path=stem_paths.get("no_drums"),
         meta_path=str(directory / "metadata.json"), generation=manifest["generation"],
-        stem_paths=stem_paths,
+        source_path=source_path, stem_paths=stem_paths,
     )
 
 
@@ -243,6 +257,43 @@ def _existing_output(wid: str, directory: Path, *, model: str, stem: str,
     return manifest
 
 
+@contextmanager
+def _output_lock(directory: Path, cancel_event=None, timeout: float | None = None):
+    lock = FileLock(str(directory.parent / ("." + directory.name + ".lock")))
+    wait_limit = OUTPUT_LOCK_TIMEOUT if timeout is None else timeout
+    deadline = time.monotonic() + wait_limit
+    while True:
+        check_cancelled(cancel_event)
+        remaining = max(0.0, deadline - time.monotonic())
+        try:
+            lock.acquire(timeout=min(0.1, remaining))
+            break
+        except Timeout:
+            if time.monotonic() >= deadline:
+                raise
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+def _persist_original(audio: Path, target: Path) -> str:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".orig-", delete=False) as tmp:
+            temp_path = Path(tmp.name)
+        shutil.copy2(audio, temp_path)
+        with temp_path.open("rb+") as file:
+            os.fsync(file.fileno())
+        os.replace(temp_path, target)
+        temp_path = None
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+    return str(target)
+
+
 def process_one(wid: str, args, progress=None, source_url=None, cancel_event=None) -> ItemResult:
     result = ItemResult(wid)
     source = source_url or wid
@@ -264,104 +315,96 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
         base_dir = out_root / ".jamly" / wid / model
         directory = (base_dir if stem == DEFAULT_STEM else base_dir / stem) / args.audio_format
         directory.parent.mkdir(parents=True, exist_ok=True)
-        with FileLock(str(directory.parent / ("." + args.audio_format + ".lock")), timeout=0):
+        local_source = local_audio_path(source)
+        with _output_lock(directory, cancel_event):
             recover_directory(directory)
             if directory.exists() and not args.replace_existing:
                 manifest = _existing_output(wid, directory, model=model, stem=stem,
                                             audio_format=args.audio_format)
                 if manifest is not None:
-                    return result_from_manifest(wid, directory, manifest, "skipped")
+                    return result_from_manifest(wid, directory, manifest, "skipped",
+                                                local_source=local_source)
 
-            stage("metadata")
-            ffmpeg_dir = detect_ffmpeg(
-                ffmpeg_dirs=[args.ffmpeg_dir] if getattr(args, "ffmpeg_dir", None) else []
-            ).path
-            if not ffmpeg_dir:
-                raise RuntimeError("Install ffmpeg and ffprobe on PATH; run jamly-doctor for details")
-            ffmpeg = str(Path(ffmpeg_dir) / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg"))
-            ffprobe = str(Path(ffmpeg_dir) / ("ffprobe.exe" if os.name == "nt" else "ffprobe"))
-            if not detect_engine():
-                raise RuntimeError("Demucs is missing; reinstall Jamly")
-            local_source = local_audio_path(source)
+        stage("metadata")
+        ffmpeg_dir = detect_ffmpeg(
+            ffmpeg_dirs=[args.ffmpeg_dir] if getattr(args, "ffmpeg_dir", None) else []
+        ).path
+        if not ffmpeg_dir:
+            raise RuntimeError("Install ffmpeg and ffprobe on PATH; run jamly-doctor for details")
+        ffmpeg = str(Path(ffmpeg_dir) / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg"))
+        ffprobe = str(Path(ffmpeg_dir) / ("ffprobe.exe" if os.name == "nt" else "ffprobe"))
+        if not detect_engine():
+            raise RuntimeError("Demucs is missing; reinstall Jamly")
+        if local_source is not None:
+            metadata = _fetch_local_metadata(ffprobe, local_source, cancel_event)
+        else:
+            command = ytdlp_command()
+            metadata = _fetch_item_metadata(command, source, cancel_event)
+        result.title = metadata.get("title") or wid
+        parsed = parse_title_artist(metadata.get("title"))
+        if not parsed and metadata.get("artist") and metadata.get("title"):
+            parsed = (metadata["artist"], metadata["title"])
+        with tempfile.TemporaryDirectory(prefix="jamly-") as work, tempfile.TemporaryDirectory(
+            prefix="." + args.audio_format + "-", dir=directory.parent
+        ) as staged:
+            workdir, staged_dir = Path(work), Path(staged)
+            stage("download")
             if local_source is not None:
-                metadata = _fetch_local_metadata(ffprobe, local_source, cancel_event)
+                audio = local_source
             else:
-                command = ytdlp_command()
-                metadata = _fetch_item_metadata(command, source, cancel_event)
-            result.title = metadata.get("title") or wid
-            parsed = parse_title_artist(metadata.get("title"))
-            if not parsed and metadata.get("artist") and metadata.get("title"):
-                parsed = (metadata["artist"], metadata["title"])
-            with tempfile.TemporaryDirectory(prefix="jamly-") as work, tempfile.TemporaryDirectory(
-                prefix="." + args.audio_format + "-", dir=directory.parent
-            ) as staged:
-                workdir, staged_dir = Path(work), Path(staged)
-                stage("download")
-                if local_source is not None:
-                    audio = local_source
-                else:
-                    audio = download_audio(
-                        build_download_cmd(command, wid, work, source, ffmpeg_dir), workdir, cancel_event
-                    )
-                stage("separate")
-                stems = separate_stems(
-                    str(audio), work, args.threads,
-                    getattr(args, "device", "auto"), cancel_event,
-                    ffmpeg_dir=ffmpeg_dir, model=model,
-                    on_progress=(lambda pct: progress(wid, "separate", pct, 100)) if progress else None,
+                audio = download_audio(
+                    build_download_cmd(command, wid, work, source, ffmpeg_dir), workdir, cancel_event
                 )
-                stage("mix")
-                destinations, meta = stem_destination_paths(
-                    staged, wid, args.audio_format, parsed, stem=stem, model=model
+            stage("separate")
+            stems = separate_stems(
+                str(audio), work, args.threads,
+                getattr(args, "device", "auto"), cancel_event,
+                ffmpeg_dir=ffmpeg_dir, model=model,
+                on_progress=(lambda pct: progress(wid, "separate", pct, 100)) if progress else None,
+            )
+            stage("mix")
+            destinations, meta = stem_destination_paths(
+                staged, wid, args.audio_format, parsed, stem=stem, model=model
+            )
+            audio_info = render_pair(stems, workdir, destinations, args.audio_format,
+                                     ffmpeg, cancel_event, target_stem=stem)
+            orig_target = None
+            if local_source is None:
+                orig_ext = audio.suffix.lower() or "." + args.audio_format
+                orig_target = (
+                    Path(audio_directory(directory))
+                    / ("%s_original%s" % (_stem_file_prefix(wid, parsed), orig_ext))
                 )
-                audio_info = render_pair(stems, workdir, destinations, args.audio_format,
-                                         ffmpeg, cancel_event, target_stem=stem)
-                # Keep the original on disk next to the published stems so it can be replayed as
-                # "Original" even when the input was a URL (yt-dlp output would otherwise live only in
-                # the temp directory). Local-file inputs already keep their own source path. The
-                # manifest keeps the canonical source_url; the retained local copy is recorded
-                # separately and surfaced via /source/{watch_id}.
-                orig_target = None
-                if local_source is None:
-                    orig_ext = audio.suffix.lower() or "." + args.audio_format
-                    orig_target = (
-                        Path(audio_directory(directory))
-                        / ("%s_original%s" % (_stem_file_prefix(wid, parsed, model=model), orig_ext))
-                    )
-                manifest = dict(
-                    meta_dict(watch_id=wid, source_url=source, title=metadata.get("title"),
-                              artist=metadata.get("artist") or (parsed[0] if parsed else None),
-                              uploader=metadata.get("uploader"), duration=metadata.get("duration_seconds")),
-                    processing_version=PROCESSING_VERSION, generation=uuid.uuid4().hex,
-                    model=model, stem=stem, format=args.audio_format, audio=audio_info,
-                    outputs={name: {"file": path.name, "sha256": checksum(path)}
-                             for name, path in destinations.items()},
-                )
-                if orig_target is not None:
-                    manifest["original"] = str(orig_target)
-                with Path(meta).open("w", encoding="utf-8") as file:
-                    json.dump(manifest, file, ensure_ascii=False, indent=2)
-                    file.flush()
-                    os.fsync(file.fileno())
-                stage("publish")
+            manifest = dict(
+                meta_dict(watch_id=wid, source_url=source, title=metadata.get("title"),
+                          artist=metadata.get("artist") or (parsed[0] if parsed else None),
+                          uploader=metadata.get("uploader"), duration=metadata.get("duration_seconds")),
+                processing_version=PROCESSING_VERSION, generation=uuid.uuid4().hex,
+                model=model, stem=stem, format=args.audio_format, audio=audio_info,
+                outputs={name: {"file": path.name, "sha256": checksum(path)}
+                         for name, path in destinations.items()},
+            )
+            if orig_target is not None:
+                manifest["original"] = str(orig_target)
+            with Path(meta).open("w", encoding="utf-8") as file:
+                json.dump(manifest, file, ensure_ascii=False, indent=2)
+                file.flush()
+                os.fsync(file.fileno())
+            stage("publish")
+            with _output_lock(directory, cancel_event):
                 publish_directory(staged_dir, directory)
                 retained = None
                 if orig_target is not None and audio is not None and Path(audio).exists():
-                    # Persist the downloaded original beside the published stems so it can be
-                    # replayed as "Original" even when the input was a URL (yt-dlp output would
-                    # otherwise live only in the temp directory). The guard checks the *source*
-                    # (audio), never orig_target, which this copy creates on first completion.
-                    Path(orig_target).parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(audio, orig_target)
-                    with Path(orig_target).open("rb+") as file:
-                        os.fsync(file.fileno())
-                    retained = str(orig_target)
-                result = result_from_manifest(wid, directory, manifest, "done")
-                if retained is not None:
-                    result.source_path = retained
-                return result
+                    retained = _persist_original(Path(audio), orig_target)
+            result = result_from_manifest(wid, directory, manifest, "done", local_source=local_source)
+            if retained is not None:
+                result.source_path = retained
+            return result
     except InterruptedError as exc:
         result.status, result.error = "cancelled", str(exc)
+    except Timeout:
+        result.status = "error"
+        result.error = "Outputs are currently in use by another process or download; try again shortly"
     except Exception as exc:
         result.status, result.error = "error", str(exc)
     return result
@@ -412,7 +455,7 @@ def main(argv=None) -> int:
                               retry=True, options=pipeline_options(args))
             else:
                 for item in queue.items:
-                    if item["status"] in ("error", "cancelled"):
+                    if item["status"] == "error":
                         queue.add(item["watch_id"], retry=True)
             pending = queue.pending_items()
             if not pending:
@@ -437,7 +480,8 @@ def main(argv=None) -> int:
                     queue.save()
                     return 130
                 queue.finish(wid, result.status, error=result.error, title=result.title,
-                             outputs=result.outputs, generation=result.generation)
+                             outputs=result.outputs, generation=result.generation,
+                             original_path=result.source_path)
                 queue.save()
                 if result.ok:
                     _log.ok("%s: %s" % (wid, result.status))

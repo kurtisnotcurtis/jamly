@@ -102,59 +102,53 @@ def recover_directory(destination: Path) -> None:
         shutil.rmtree(backup)
 
 
-def publish_directory(staged: Path, destination: Path) -> None:
-    """The caller holds the track/format lock. Readers see a whole generation or no directory."""
-    manifest = read_manifest(staged)
-    for path in staged.iterdir():
+def _fsync_files(directory: Path) -> None:
+    for path in directory.iterdir():
         if path.is_file():
             # Windows' FlushFileBuffers requires a handle opened for writing.
             with path.open("rb+") as file:
                 os.fsync(file.fileno())
+
+
+def _backup_flat_audio(destination: Path, audio_root: Path) -> None:
+    if audio_root == destination or not (destination / "metadata.json").is_file():
+        return
+    try:
+        old_data = json.loads((destination / "metadata.json").read_text(encoding="utf-8"))
+        outputs = old_data.get("outputs") if isinstance(old_data, dict) else None
+    except (OSError, ValueError):
+        return
+    if not isinstance(outputs, dict):
+        return
+    for rec in outputs.values():
+        fname = rec.get("file") if isinstance(rec, dict) else None
+        if isinstance(fname, str) and (audio_root / fname).is_file():
+            shutil.copy2(audio_root / fname, destination / fname)
+
+
+def _move_flat_audio(destination: Path, audio_root: Path, manifest: dict) -> None:
+    if audio_root == destination:
+        return
+    audio_root.mkdir(parents=True, exist_ok=True)
+    for rec in manifest["outputs"].values():
+        fname = rec["file"]
+        if (destination / fname).is_file():
+            os.replace(destination / fname, audio_root / fname)
+
+
+def publish_directory(staged: Path, destination: Path) -> None:
+    """The caller holds the track/format lock. Readers see a whole generation or no directory."""
+    manifest = read_manifest(staged)
+    _fsync_files(staged)
     audio_root = audio_directory(destination)
     backup = previous_directory(destination)
     recover_directory(destination)
     if destination.exists():
-        if audio_root != destination and (destination / "metadata.json").is_file():
-            try:
-                old_data = json.loads((destination / "metadata.json").read_text(encoding="utf-8"))
-                for rec in (old_data.get("outputs") or {}).values():
-                    fname = rec.get("file") if isinstance(rec, dict) else None
-                    if isinstance(fname, str) and (audio_root / fname).is_file():
-                        shutil.copy2(audio_root / fname, destination / fname)
-            except (OSError, ValueError):
-                pass
+        _backup_flat_audio(destination, audio_root)
         os.replace(destination, backup)
     try:
         os.replace(staged, destination)
-        if audio_root != destination:
-            audio_root.mkdir(parents=True, exist_ok=True)
-            published_hashes = {}
-            for rec in manifest["outputs"].values():
-                fname = rec["file"]
-                published_hashes[fname] = rec["sha256"]
-                if (destination / fname).is_file():
-                    os.replace(destination / fname, audio_root / fname)
-            wid = manifest.get("watch_id")
-            model = manifest.get("model")
-            model_dir = (audio_root / ".jamly" / wid / model) if (wid and model) else None
-            if model_dir and model_dir.is_dir():
-                for other_meta in model_dir.rglob("metadata.json"):
-                    if other_meta.parent == destination or ".previous" in other_meta.parent.name:
-                        continue
-                    try:
-                        other_data = json.loads(other_meta.read_text(encoding="utf-8"))
-                        changed = False
-                        for other_rec in (other_data.get("outputs") or {}).values():
-                            fname = other_rec.get("file") if isinstance(other_rec, dict) else None
-                            if fname in published_hashes and other_rec.get("sha256") != published_hashes[fname]:
-                                other_rec["sha256"] = published_hashes[fname]
-                                changed = True
-                        if changed:
-                            other_meta.write_text(
-                                json.dumps(other_data, ensure_ascii=False, indent=2), encoding="utf-8"
-                            )
-                    except (OSError, ValueError):
-                        pass
+        _move_flat_audio(destination, audio_root, manifest)
     except OSError:
         if destination.exists():
             shutil.rmtree(destination, ignore_errors=True)

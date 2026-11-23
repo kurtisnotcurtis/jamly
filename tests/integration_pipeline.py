@@ -31,7 +31,7 @@ class RealPipelineTests(unittest.TestCase):
                                                   "--device", "cpu"])
                 result = process_one(item.watch_id, args, source_url=source)
                 self.assertEqual(result.status, "done", result.error)
-                first, second = sf.info(result.drums_path), sf.info(result.nodrums_path)
+                first, second = sf.info(result.outputs["drums"]), sf.info(result.outputs["no_drums"])
                 self.assertEqual((first.frames, first.channels, first.samplerate),
                                  (second.frames, second.channels, second.samplerate))
                 self.assertEqual((first.subtype, second.subtype), ("FLOAT", "FLOAT"))

@@ -1,13 +1,14 @@
 """Unit tests for queue.py (persistent, resumable input queue). No network/GPU."""
+import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
-
-from jamly.watch_queue import QueueError, WatchQueue, default_queue_path, queue_owner
+from jamly.watch_queue import QueueError, WatchQueue, queue_owner
 
 
 class DedupTests(unittest.TestCase):
@@ -26,12 +27,12 @@ class DedupTests(unittest.TestCase):
         self.assertEqual(q.add_all(ids), 3)   # a1 counted once
         self.assertEqual(len(q), 3)
 
-    def test_remove_and_is_complete(self):
+    def test_remove_drops_item(self):
         q = WatchQueue()
         q.add("x")
         self.assertTrue(q.remove("x"))
         self.assertFalse(q.remove("x"))
-        self.assertFalse(q.is_complete("x"))
+        self.assertNotIn("x", q.done_ids())
 
 
 class PersistenceTests(unittest.TestCase):
@@ -40,39 +41,45 @@ class PersistenceTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         return directory.name
 
-    def test_save_reload_roundtrip_with_done(self):
+    def test_save_reload_roundtrip_without_legacy_done_list(self):
         d = self._tmp()
         q = WatchQueue(path=os.path.join(d, "queue.json"))
-        # ids are already normalized upstream; queue dedups by exact id only
         for wid in ("a", "b", "c"):
             self.assertTrue(q.add(wid))
-        q.mark_done("b")          # simulate completion of an item mid-run
+        q.finish("b", "done")
         q.save()
+        raw = json.loads(Path(q.path).read_text(encoding="utf-8"))
+        self.assertNotIn("done", raw)
         reloaded = WatchQueue.from_path(q.path)
         self.assertEqual(reloaded.pending_ids(), ["a", "c"])
-        self.assertTrue(reloaded.is_complete("b"))
-        # newly-added ids are NOT marked done (resumable: they remain pending on reload)
+        self.assertEqual(reloaded.done_ids(), ["b"])
         q.add("d")
         q.save()
         again = WatchQueue.from_path(q.path)
         self.assertIn("d", again.pending_ids())
-        self.assertTrue(reloaded.is_complete("b"))
+        self.assertIn("b", reloaded.done_ids())
 
-    def test_source_url_survives_reload(self):
+    def test_legacy_done_set_is_still_readable_on_load(self):
+        d = self._tmp()
+        path = Path(d) / "legacy.json"
+        path.write_text(json.dumps({
+            "items": [{"watch_id": "done_id"}, {"watch_id": "todo_id"}],
+            "done": ["done_id"],
+        }), encoding="utf-8")
+        reloaded = WatchQueue.from_path(str(path))
+        self.assertEqual(reloaded.done_ids(), ["done_id"])
+        self.assertEqual(reloaded.pending_ids(), ["todo_id"])
+
+    def test_source_url_and_original_path_survive_reload_independently(self):
         d = self._tmp()
         q = WatchQueue(path=os.path.join(d, "queue.json"))
         q.add("src-abc", source_url="https://soundcloud.com/artist/song")
+        q.finish("src-abc", "done", original_path="/exports/song_original.m4a")
         q.save()
         reloaded = WatchQueue.from_path(q.path)
-        self.assertEqual(
-            reloaded.pending_items()[0]["source_url"],
-            "https://soundcloud.com/artist/song",
-        )
-
-    def test_init_accepts_done_list(self):
-        q = WatchQueue(done=["done_id"])
-        self.assertTrue(q.is_complete("done_id"))
-        self.assertEqual(q.count_pending(), 0)
+        record = reloaded.get("src-abc")
+        self.assertEqual(record["source_url"], "https://soundcloud.com/artist/song")
+        self.assertEqual(record["original_path"], "/exports/song_original.m4a")
 
     def test_from_missing_file_is_empty(self):
         q = WatchQueue.from_path(os.path.join(self._tmp(), "does_not_exist.json"))
@@ -85,10 +92,17 @@ class PersistenceTests(unittest.TestCase):
         with self.assertRaises(QueueError):
             WatchQueue.from_path(path)
 
-    def test_default_queue_path_is_in_scope(self):
-        d = self._tmp()
-        p = default_queue_path(d)
-        self.assertTrue(p.startswith(os.path.abspath(d)))
+    def test_copy_on_write_does_not_mutate_original_queue(self):
+        q = WatchQueue()
+        q.add("job1", source_url="https://example.test/1")
+        q.add("job2", source_url="https://example.test/2")
+        candidate = q.copy()
+        candidate.mark_running("job1")
+        candidate.finish("job1", "done", outputs={"drums": "/out/d.wav"}, generation="g1")
+        candidate.add("job3")
+        self.assertEqual(q.get("job1")["status"], "pending")
+        self.assertEqual(q.get("job1")["attempts"], 0)
+        self.assertIsNone(q.get("job3"))
 
 
 class AccessorsTests(unittest.TestCase):
@@ -100,17 +114,15 @@ class AccessorsTests(unittest.TestCase):
     def test_done_ids_tracks_completed_and_survives_reload(self):
         d = self._tmp()
         q = WatchQueue(path=os.path.join(d, "queue.json"))
-        for wid in ("a", "b", "c"):  # items are stored PENDING by default
+        for wid in ("a", "b", "c"):
             self.assertTrue(q.add(wid))
-        self.assertEqual(q.done_ids(), [])   # nothing marked done yet
+        self.assertEqual(q.done_ids(), [])
 
-        q.mark_done("a")
-        q.mark_done("c")
-        self.assertEqual(q.done_ids(), ["a", "c"])  # _done is authoritative, order-preserving
-        self.assertEqual(len(q.items), 3)            # .items exposes all raw records (not just pending)
+        q.finish("a", "done")
+        q.finish("c", "done")
+        self.assertEqual(q.done_ids(), ["a", "c"])
+        self.assertEqual(len(q.items), 3)
 
-        # persist before reload so the done set is written to disk (add/mark_done do not auto-save);
-        # from_path() reads "done" back and rebuilds _done, which must match the in-memory value.
         q.save()
         reloaded = WatchQueue.from_path(q.path)
         self.assertEqual(reloaded.done_ids(), ["a", "c"])
@@ -124,8 +136,7 @@ class AccessorsTests(unittest.TestCase):
         self.assertEqual(len(recs), 1)
         self.assertIn("title", recs["vid123"])
         self.assertIn("status", recs["vid123"])
-        # mark_done flips the status on the same raw record without duplicating it
-        q.mark_done("vid123")
+        q.finish("vid123", "done")
         self.assertEqual(len(q.items), 1)
         self.assertEqual(q.items[0]["status"], WatchQueue.DONE)
         self.assertIn("vid123", q.done_ids())
@@ -210,6 +221,7 @@ class RecoveryTests(unittest.TestCase):
         changed = queue.restore_export(
             "finished",
             source_url="https://youtu.be/finished",
+            original_path="/out/finished_original.m4a",
             title="Finished Song",
             model="htdemucs_ft",
             stem="vocals",
@@ -221,10 +233,12 @@ class RecoveryTests(unittest.TestCase):
         restored = queue.get("finished")
         self.assertEqual(restored["status"], "done")
         self.assertEqual(restored["title"], "Finished Song")
+        self.assertEqual(restored["original_path"], "/out/finished_original.m4a")
         self.assertIn("htdemucs_ft/vocals/wav", restored["exports"])
         self.assertFalse(queue.restore_export(
             "finished",
             source_url="https://youtu.be/finished",
+            original_path="/out/finished_original.m4a",
             title="Finished Song",
             model="htdemucs_ft",
             stem="vocals",
@@ -258,6 +272,7 @@ class RecoveryTests(unittest.TestCase):
             self.assertIsNone(retried["started_at"])
             self.assertIsNone(retried["finished_at"])
             self.assertIsNone(retried["duration_seconds"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -6,7 +6,7 @@ import unittest
 
 from jamly.normalize import (
     InputError, WATCH_ID_RE, extract_watch_id, local_audio_path,
-    make_input, normalize_inputs, normalize_inputs_full,
+    make_input, normalize_inputs_full,
 )
 
 
@@ -62,30 +62,30 @@ class ExtractTests(unittest.TestCase):
 
 class NormalizeInputsTests(unittest.TestCase):
     def test_dedupe_preserves_order(self):
-        ids = normalize_inputs([
+        ids = [item.watch_id for item in normalize_inputs_full([
             "dQw4w9WgXcQ",
             "https://youtu.be/dQw4w9WgXcQ",          # same case-sensitive video id
             None,                                      # skipped
             "",                                        # skipped
             "  youtube.com/shorts/DQW4W9WGXCQ  ",     # second unique id
-        ])
+        ])]
         self.assertEqual(ids, ["dQw4w9WgXcQ", "DQW4W9WGXCQ"])
 
     def test_single_string_is_one_input(self):
-        self.assertEqual(normalize_inputs("https://youtu.be/dQw4w9WgXcQ"), ["dQw4w9WgXcQ"])
+        self.assertEqual([i.watch_id for i in normalize_inputs_full("https://youtu.be/dQw4w9WgXcQ")], ["dQw4w9WgXcQ"])
 
     def test_none_returns_empty(self):
-        self.assertEqual(normalize_inputs(None), [])
+        self.assertEqual(normalize_inputs_full(None), [])
 
     def test_non_youtube_sources_receive_stable_ids(self):
-        first = normalize_inputs(["https://soundcloud.com/artist/song"])
-        second = normalize_inputs(["https://soundcloud.com/artist/song"])
+        first = [i.watch_id for i in normalize_inputs_full(["https://soundcloud.com/artist/song"])]
+        second = [i.watch_id for i in normalize_inputs_full(["https://soundcloud.com/artist/song"])]
         self.assertEqual(first, second)
         self.assertTrue(first[0].startswith("src-"))
 
     def test_non_string_raises(self):
         with self.assertRaises(InputError):
-            normalize_inputs([123])
+            normalize_inputs_full([123])
 
 
 class MultiHostExtractionTests(unittest.TestCase):
@@ -155,6 +155,11 @@ class MultiHostExtractionTests(unittest.TestCase):
     def test_remote_file_uri_is_rejected(self):
         with self.assertRaises(InputError):
             make_input("file://evil.example/share/song.wav")
+
+    def test_non_audio_local_paths_are_rejected(self):
+        for bad in ("/etc/passwd", "C:\\Windows\\win.ini", "./notes.txt", "file:///etc/passwd"):
+            with self.subTest(bad=bad), self.assertRaises(InputError):
+                make_input(bad)
 
 
 if __name__ == "__main__":

@@ -65,6 +65,12 @@ def local_audio_path(input_text: str | None) -> Path | None:
         if parsed.query or parsed.fragment or not parsed.path:
             raise InputError("Invalid file:// URI")
         raw_path = url2pathname(unquote(parsed.path))
+        suffix = Path(raw_path).suffix.lower()
+        if suffix not in LOCAL_AUDIO_EXTENSIONS:
+            raise InputError(
+                "Unsupported local audio file extension %r; use wav, mp3, flac, m4a, ogg, opus, aac, aiff, or wma"
+                % (suffix or raw_path)
+            )
         return Path(raw_path).expanduser().resolve()
     if "://" in source or is_valid_watch_id(source):
         return None
@@ -79,12 +85,19 @@ def local_audio_path(input_text: str | None) -> Path | None:
         or "\\" in source
     )
     suffix = Path(source).suffix.lower()
+    if is_explicit_path:
+        if suffix not in LOCAL_AUDIO_EXTENSIONS:
+            raise InputError(
+                "Unsupported local audio file extension %r; use wav, mp3, flac, m4a, ogg, opus, aac, aiff, or wma"
+                % (suffix or source)
+            )
+        return Path(source).expanduser().resolve()
     is_audio_filename = (
         suffix in LOCAL_AUDIO_EXTENSIONS
         and not source.lower().startswith("ytsearch")
         and "/" not in source
     )
-    if is_explicit_path or is_audio_filename:
+    if is_audio_filename:
         return Path(source).expanduser().resolve()
     return None
 
@@ -119,7 +132,3 @@ def normalize_inputs_full(inputs, dedupe: bool = True) -> list[Input]:
             output.append(item)
             seen.add(item.watch_id)
     return output
-
-
-def normalize_inputs(inputs, dedupe: bool = True) -> list[str]:
-    return [item.watch_id for item in normalize_inputs_full(inputs, dedupe)]

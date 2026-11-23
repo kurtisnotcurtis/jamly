@@ -20,13 +20,16 @@ class ServerTests(unittest.TestCase):
     wid = "dQw4w9WgXcQ"
     source = "https://youtu.be/dQw4w9WgXcQ"
 
-    def start(self, process=None):
+    def start(self, process=None, *, extra_args=None):
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        args = server.build_parser().parse_args([
+        argv = [
             "--port", "0", "--queue", str(root / "queue.json"),
             "--state-dir", str(root),
             "--output-dir", str(root / "output"), "--server-token", "test-token",
-        ])
+        ]
+        if extra_args:
+            argv.extend(extra_args)
+        args = server.build_parser().parse_args(argv)
         self.enterContext(patch.object(
             server, "process_one", side_effect=process or
             (lambda wid, args, **kwargs: ItemResult(wid, status="done"))
@@ -75,6 +78,7 @@ class ServerTests(unittest.TestCase):
         self.start()
         self.assertEqual(self.request("GET", "/healthz", auth=False)[0], 200)
         self.assertEqual(self.request("GET", "/status", auth=False)[0], 401)
+        self.assertEqual(self.request("GET", "/items")[0], 404)
         self.assertEqual(self.request("POST", "/add", {"inputs": [self.source]}, auth=False)[0], 401)
         self.assertEqual(self.app.queue.items, [])
 
@@ -243,22 +247,67 @@ class ServerTests(unittest.TestCase):
         self.assertIsNone(state["current"])
         self.assertEqual(seen, [self.source])
 
-    def test_local_source_audio_is_streamed_from_backend(self):
+    def test_local_source_audio_is_streamed_with_range_support_after_completion(self):
         with tempfile.TemporaryDirectory() as folder:
             source_path = Path(folder) / "track.wav"
             payload = b"WAVE\x00\x00\x00\x00jamly original audio bytes"
             source_path.write_bytes(payload)
-            self.start(process=lambda wid, args, **kwargs: ItemResult(wid, status="done"))
+            self.start(process=lambda wid, args, **kwargs: ItemResult(
+                wid, status="done", source_path=str(source_path.resolve()),
+            ))
             self.request("POST", "/add", {"inputs": [str(source_path)]})
-            state = self.wait_for(lambda state: state["total"] == 1)
-            job = next(item for item in state["jobs"] if item.get("watch_id"))
+            state = self.wait_for(lambda state: state["done"] == 1)
+            job = state["jobs"][0]
             wid = job["watch_id"]
-            self.assertTrue(str(source_path.resolve()).endswith(job.get("source_url", "")))
-            code, body, headers = self.request(
-                "GET", "/source/" + unquote(wid), raw=True)
+            self.assertTrue(job["has_original"])
+            self.assertEqual(Path(job["source_url"]), source_path.resolve())
+
+            code, body, headers = self.request("GET", "/source/" + unquote(wid), raw=True)
             self.assertEqual(code, 200)
             self.assertEqual(headers.get("Content-Type"), "audio/wav")
+            self.assertEqual(headers.get("Accept-Ranges"), "bytes")
             self.assertEqual(body, payload)
+
+            # Single byte Range request returns 206 Partial Content.
+            code, part, headers = self.request(
+                "GET", "/source/" + unquote(wid), headers={"Range": "bytes=0-7"}, raw=True,
+            )
+            self.assertEqual(code, 206)
+            self.assertEqual(part, payload[:8])
+            self.assertEqual(headers.get("Content-Range"), "bytes 0-7/%d" % len(payload))
+
+            # Out-of-bounds Range returns 416.
+            code, _, headers = self.request(
+                "GET", "/source/" + unquote(wid), headers={"Range": "bytes=9999-"}, raw=True,
+            )
+            self.assertEqual(code, 416)
+            self.assertEqual(headers.get("Content-Range"), "bytes */%d" % len(payload))
+
+    def test_source_endpoint_never_reads_arbitrary_files_or_proxies_http(self):
+        """DESIGN.md:113 / Defect 1: /source/<id> never proxies HTTP or serves unverified paths."""
+        with tempfile.TemporaryDirectory() as folder:
+            secret = Path(folder) / "secret.txt"
+            secret.write_text("top-secret", encoding="utf-8")
+            self.start(process=lambda wid, args, **kwargs: ItemResult(wid, status="done"))
+
+            # Non-audio local file paths are rejected at enqueue.
+            code, _, _ = self.request("POST", "/add", {"inputs": [str(secret)]})
+            self.assertEqual(code, 400)
+
+            # An HTTP source with no retained original_path returns 404 and never makes an HTTP request.
+            self.request("POST", "/add", {"inputs": ["http://127.0.0.1:1/never-fetch"]})
+            state = self.wait_for(lambda s: s["done"] == 1)
+            http_wid = state["jobs"][0]["watch_id"]
+            self.assertFalse(state["jobs"][0]["has_original"])
+            code, _, _ = self.request("GET", "/source/" + http_wid)
+            self.assertEqual(code, 404)
+
+            # Even if original_path in a queue record were tampered to a non-audio file, /source refuses it.
+            with self.app._status_lock:
+                self.app.queue.finish(http_wid, "done", original_path=str(secret))
+                self.app.queue.save()
+            code, _, _ = self.request("GET", "/source/" + http_wid)
+            self.assertEqual(code, 404)
 
     def test_error_survives_reload_and_explicit_retry_succeeds(self):
         attempts = []
@@ -309,6 +358,23 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(WatchQueue.from_path(self.app.queue_path).pending_ids(), [self.wid])
         replacement = server.ItemServer(self.app.args)
         replacement.stop()
+
+    def test_stop_requeues_job_even_when_worker_exits_with_signal_error(self):
+        """DESIGN.md:105 / Defect 4: simultaneous SIGTERM to backend and worker requeues as pending."""
+        started = threading.Event()
+
+        def process(wid, _args, *, cancel_event, **_kwargs):
+            started.set()
+            cancel_event.wait(timeout=5)
+            return ItemResult(wid, status="error", error="Demucs failed: exit -15")
+
+        self.start(process)
+        self.request("POST", "/add", {"inputs": [self.source]})
+        self.assertTrue(started.wait(3))
+        self.app.stop()
+        loaded = WatchQueue.from_path(self.app.queue_path)
+        self.assertEqual(loaded.get(self.wid)["status"], "pending")
+        self.assertIsNone(loaded.get(self.wid)["error"])
 
     def test_cancel_stops_running_and_queued_jobs_and_allows_retry(self):
         started = threading.Event()
@@ -376,9 +442,9 @@ class ServerTests(unittest.TestCase):
             }
             meta_path = directory / "metadata.json"
             meta_path.write_text(json.dumps(metadata))
-            return ItemResult(wid, status="done", drums_path=str(paths["drums"]),
-                              nodrums_path=str(paths["no_drums"]), meta_path=str(meta_path),
-                              generation="generation-one")
+            return ItemResult(wid, status="done",
+                              stem_paths={k: str(v) for k, v in paths.items()},
+                              meta_path=str(meta_path), generation="generation-one")
         self.start(process)
         self.request("POST", "/add", {"inputs": [self.source]})
         state = self.wait_for(lambda state: state["done"] == 1)
@@ -394,8 +460,9 @@ class ServerTests(unittest.TestCase):
                                   auth=False, headers=form_headers, raw=True)
         self.assertNotEqual(code, 200)
 
-    def test_local_file_upload_and_retained_multi_preset_exports(self):
-        def process(wid, args, **_kwargs):
+    def test_local_file_upload_retained_multi_preset_exports_and_cleanup_on_clear(self):
+        """Defect 5: uploaded audio is deleted when its job is removed from the list."""
+        def process(wid, args, *, source_url=None, **_kwargs):
             directory = Path(args.output_dir) / wid / args.model / args.audio_format
             directory.mkdir(parents=True, exist_ok=True)
             paths = {}
@@ -411,9 +478,10 @@ class ServerTests(unittest.TestCase):
             }
             meta_path = directory / "metadata.json"
             meta_path.write_text(json.dumps(metadata))
-            return ItemResult(wid, status="done", drums_path=str(paths["drums"]),
-                              nodrums_path=str(paths["no_drums"]), meta_path=str(meta_path),
-                              generation=gen)
+            return ItemResult(wid, status="done",
+                              stem_paths={k: str(v) for k, v in paths.items()},
+                              meta_path=str(meta_path), generation=gen,
+                              source_path=source_url)
 
         self.start(process)
         code, bad_upload, _ = self.request(
@@ -427,7 +495,8 @@ class ServerTests(unittest.TestCase):
             headers={"Content-Type": "audio/wav"},
         )
         self.assertEqual(code, 200)
-        self.assertTrue(Path(uploaded["source"]).is_file())
+        uploaded_path = Path(uploaded["source"])
+        self.assertTrue(uploaded_path.is_file())
         self.assertEqual(self.request("POST", "/add", {
             "inputs": [uploaded["source"]], "model": "htdemucs", "audio_format": "mp3",
         })[0], 202)
@@ -446,6 +515,32 @@ class ServerTests(unittest.TestCase):
         second_url = next(item["url"] for item in job["outputs"] if item["kind"] == "drums")
         self.assertEqual(self.request("GET", second_url, raw=True)[1], b"htdemucs_6s-drums")
 
+        # Removing the job cleans up the uploaded file (and its empty digest folder).
+        code, cleared, _ = self.request("POST", "/app/clear", {"id": job["watch_id"]})
+        self.assertEqual(code, 200)
+        self.assertEqual(cleared["removed"], 1)
+        self.assertFalse(uploaded_path.exists())
+        self.assertFalse(uploaded_path.parent.exists())
+
+    def test_orphaned_uploads_are_pruned_on_startup(self):
+        with tempfile.TemporaryDirectory() as root:
+            state = Path(root)
+            orphan_dir = state / "uploads" / "deadbeef01234567"
+            orphan_dir.mkdir(parents=True)
+            orphan_file = orphan_dir / "abandoned.wav"
+            orphan_file.write_bytes(b"abandoned")
+            args = server.build_parser().parse_args([
+                "--port", "0", "--queue", str(state / "queue.json"),
+                "--state-dir", str(state),
+                "--output-dir", str(state / "output"), "--server-token", "test-token",
+            ])
+            app = server.ItemServer(args)
+            try:
+                self.assertFalse(orphan_file.exists())
+                self.assertFalse(orphan_dir.exists())
+            finally:
+                app.stop()
+
     def test_clear_and_rescan_exports_and_open_source_folder(self):
         def process(wid, args, **_kwargs):
             meta_dir = Path(args.output_dir) / ".jamly" / wid / args.model / args.audio_format
@@ -457,9 +552,12 @@ class ServerTests(unittest.TestCase):
                 path = audio_dir / f"{wid}_{kind}.{args.audio_format}"
                 path.write_bytes(kind.encode())
                 paths[kind] = path
+            original = audio_dir / f"{wid}_original.{args.audio_format}"
+            original.write_bytes(b"retained-original")
             metadata = {
                 "watch_id": wid,
                 "source_url": self.source,
+                "original": str(original),
                 "title": "Test Track",
                 "processing_version": PROCESSING_VERSION,
                 "generation": "gen-rescan",
@@ -471,9 +569,10 @@ class ServerTests(unittest.TestCase):
             }
             meta_path = meta_dir / "metadata.json"
             meta_path.write_text(json.dumps(metadata), encoding="utf-8")
-            return ItemResult(wid, status="done", drums_path=str(paths["drums"]),
-                              nodrums_path=str(paths["no_drums"]), meta_path=str(meta_path),
-                              generation="gen-rescan")
+            return ItemResult(wid, status="done",
+                              stem_paths={k: str(v) for k, v in paths.items()},
+                              meta_path=str(meta_path), generation="gen-rescan",
+                              source_path=str(original))
 
         self.start(process)
         output_root = self.root / "output"
@@ -504,6 +603,9 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(len(state["jobs"]), 1)
         self.assertEqual(state["jobs"][0]["watch_id"], self.wid)
         self.assertEqual(state["jobs"][0]["title"], "Test Track")
+        self.assertEqual(state["jobs"][0]["source_url"], self.source)
+        self.assertTrue(state["jobs"][0]["has_original"])
+        self.assertEqual(self.request("GET", "/source/" + self.wid, raw=True)[1], b"retained-original")
         self.assertTrue((output_root / f"{self.wid}_drums.mp3").is_file())
 
         code, bulk_cleared, _ = self.request("POST", "/app/clear", {})
@@ -520,6 +622,9 @@ class ServerTests(unittest.TestCase):
             code, _, _ = self.request("POST", "/app/open-folder", {"id": local_wid, "target": "source"})
             self.assertEqual(code, 200)
             mocked_open.assert_called_once_with(local_file.parent.resolve())
+        # Clearing a job with a user-supplied local file outside uploads/ must NOT delete it.
+        self.request("POST", "/app/clear", {"id": local_wid})
+        self.assertTrue(local_file.is_file())
 
     def test_status_search_filter_and_pagination_for_large_collections(self):
         def process(wid, args, **_kwargs):
@@ -528,7 +633,6 @@ class ServerTests(unittest.TestCase):
             return ItemResult(wid, status="done", title="Song " + wid)
 
         self.start(process)
-        # Seed 30 items directly via queue so test stays fast while exercising >25 pagination.
         entries = []
         for idx in range(30):
             wid = f"track-{idx:03d}"
@@ -572,12 +676,14 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(self.request("GET", "/status?status=bogus")[0], 400)
 
-    def test_original_retained_on_disk_and_served_for_url_jobs(self):
-        """A URL job keeps its extracted original next to the stems and serves it as 'Original'."""
+    def test_original_retained_separately_and_retry_uses_canonical_url(self):
+        """Defects 1 & 2: URL jobs keep canonical source_url, store retained original separately, and retry the URL."""
         wid = self.wid
         source = self.source
+        seen_sources = []
 
-        def process(wid, args, **_kwargs):
+        def process(wid, args, *, source_url=None, **_kwargs):
+            seen_sources.append(source_url)
             fmt = args.audio_format
             output_root = Path(args.output_dir)
             output_root.mkdir(parents=True, exist_ok=True)
@@ -587,15 +693,15 @@ class ServerTests(unittest.TestCase):
             nodrums = output_root / f"{wid}_no_drums.{fmt}"
             drum.write_bytes(b"drums")
             nodrums.write_bytes(b"no-drums")
-            # The retained original sits beside the stems, named with an _original suffix.
             original = output_root / f"{wid}_original.{fmt}"
             original.write_bytes(b"original-audio")
             metadata = {
                 "watch_id": wid,
-                "source_url": str(original),
+                "source_url": source,
+                "original": str(original),
                 "title": "Test Track",
                 "processing_version": PROCESSING_VERSION,
-                "generation": "gen-retained",
+                "generation": "gen-retained-%d" % len(seen_sources),
                 "model": args.model,
                 "stem": args.stem,
                 "format": fmt,
@@ -605,28 +711,28 @@ class ServerTests(unittest.TestCase):
                 },
             }
             (meta_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
-            return ItemResult(wid, status="done", drums_path=str(drum),
-                              nodrums_path=str(nodrums), meta_path=str(meta_dir / "metadata.json"),
-                              generation="gen-retained", source_path=str(original))
+            return ItemResult(
+                wid, status="done",
+                stem_paths={"drums": str(drum), "no_drums": str(nodrums)},
+                meta_path=str(meta_dir / "metadata.json"),
+                generation=metadata["generation"], source_path=str(original),
+            )
 
         self.start(process)
         output_root = self.root / "output"
         self.request("POST", "/add", {"inputs": [source]})
-        self.wait_for(lambda _s: self.app.queue.get(wid, {}).get("status") == "done")
+        done = self.wait_for(lambda _s: self.app.queue.get(wid, {}).get("status") == "done")
 
-        # The original is retained on disk beside the drum / drumless stems.
         retained = output_root / f"{wid}_original.mp3"
         self.assertTrue(retained.is_file(), "retained original missing next to the stems")
         self.assertEqual(retained.read_bytes(), b"original-audio")
 
-        # The live job reports a local source_url (not the remote URL) so 'Original' is offered.
+        # source_url remains canonical; original_path holds the retained copy; API exposes has_original=True.
         item = self.app.queue.get(wid)
-        self.assertNotEqual(item["source_url"], source)
-        # A local path (including Windows drive paths like "C:\\...", whose scheme parses as the
-        # drive letter) must not be treated as a remote URL -- this mirrors _source's classification.
-        self.assertNotIn(urlsplit(item["source_url"]).scheme.lower(), ("http", "https"),
-                         "original should be a local path")
-        self.assertEqual(Path(item["source_url"]).name, retained.name)
+        self.assertEqual(item["source_url"], source)
+        self.assertEqual(Path(item["original_path"]), retained)
+        self.assertEqual(done["jobs"][0]["source_url"], source)
+        self.assertTrue(done["jobs"][0]["has_original"])
 
         # /source/{watch_id} streams the retained original's exact bytes.
         code, body, headers = self.request("GET", "/source/" + wid, raw=True)
@@ -634,8 +740,12 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(headers["Content-Type"].startswith("audio/"))
         self.assertEqual(body, b"original-audio")
 
+        # Retrying passes the canonical remote URL, NOT the retained local copy.
+        self.request("POST", "/retry/" + wid, {"replace_existing": True})
+        self.wait_for(lambda _s: len(seen_sources) == 2 and self.app.queue.get(wid, {}).get("status") == "done")
+        self.assertEqual(seen_sources, [source, source])
+
     def test_url_job_still_streams_stems_independently_of_original(self):
-        """Drums/drumless keep streaming via /outputs even after the original path is retained."""
         wid = self.wid
 
         def process(wid, args, **_kwargs):
@@ -651,17 +761,19 @@ class ServerTests(unittest.TestCase):
             nodrums.write_bytes(b"no-drums")
             original.write_bytes(b"original-audio")
             metadata = {
-                "watch_id": wid, "source_url": str(original), "title": "Test Track",
-                "processing_version": PROCESSING_VERSION, "generation": "gen-stems",
-                "model": args.model, "stem": args.stem, "format": fmt,
+                "watch_id": wid, "source_url": self.source, "original": str(original),
+                "title": "Test Track", "processing_version": PROCESSING_VERSION,
+                "generation": "gen-stems", "model": args.model, "stem": args.stem, "format": fmt,
                 "outputs": {"drums": {"file": drum.name, "sha256": checksum(drum)},
                             "no_drums": {"file": nodrums.name, "sha256": checksum(nodrums)}},
             }
             meta_path = meta_dir / "metadata.json"
             meta_path.write_text(json.dumps(metadata), encoding="utf-8")
-            return ItemResult(wid, status="done", drums_path=str(drum),
-                              nodrums_path=str(nodrums), meta_path=str(meta_path),
-                              generation="gen-stems", source_path=str(original))
+            return ItemResult(
+                wid, status="done",
+                stem_paths={"drums": str(drum), "no_drums": str(nodrums)},
+                meta_path=str(meta_path), generation="gen-stems", source_path=str(original),
+            )
 
         self.start(process)
         self.request("POST", "/add", {"inputs": [self.source]})
@@ -678,3 +790,22 @@ class HostTests(unittest.TestCase):
             self.assertTrue(server._is_loopback_host(host))
         for host in ("", "0.0.0.0", "evil.example", "127.0.0.1.evil.example"):
             self.assertFalse(server._is_loopback_host(host))
+
+    def test_non_loopback_rejects_local_file_paths(self):
+        with tempfile.TemporaryDirectory() as root:
+            state = Path(root)
+            wav = state / "local.wav"
+            wav.write_bytes(b"RIFF")
+            args = server.build_parser().parse_args([
+                "--host", "0.0.0.0", "--port", "0",
+                "--queue", str(state / "queue.json"),
+                "--state-dir", str(state),
+                "--output-dir", str(state / "output"),
+                "--server-token", "remote-token",
+            ])
+            app = server.ItemServer(args)
+            try:
+                with self.assertRaisesRegex(ValueError, "loopback"):
+                    app.enqueue([str(wav)])
+            finally:
+                app.stop()

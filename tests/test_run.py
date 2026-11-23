@@ -3,9 +3,12 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
+from filelock import FileLock
 import numpy as np
 import soundfile as sf
 
@@ -91,27 +94,28 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result.status, "done", result.error)
         self.assertEqual(stages, ["metadata", "download", "separate", "mix", "publish"])
         directory = Path(result.meta_path).parent
-        self.assertEqual(Path(result.drums_path).parent, self.root / "output")
+        self.assertEqual(Path(result.outputs["drums"]).parent, self.root / "output")
         self.assertEqual(directory, self.root / "output" / ".jamly" / self.wid / "htdemucs" / "wav")
         manifest = outputs.read_manifest(directory)
         self.assertEqual(manifest["source_url"], "https://youtu.be/" + self.wid)
         self.assertEqual(manifest["generation"], result.generation)
-        self.assertEqual(sf.info(result.drums_path).subtype, "FLOAT")
-        self.assertEqual(sf.info(result.nodrums_path).subtype, "FLOAT")
+        self.assertEqual(sf.info(result.outputs["drums"]).subtype, "FLOAT")
+        self.assertEqual(sf.info(result.outputs["no_drums"]).subtype, "FLOAT")
         self.assertFalse(any(path.name.startswith(".wav-") for path in directory.parent.iterdir()))
 
     def test_url_download_retains_original_beside_stems_and_exposes_source_path(self):
-        # A YouTube/URL input has no local source file; the retained download must be written next
-        # to the published stems so it can be replayed as "Original". See regression for the
-        # retention copy that was guarded by a non-existent existence check.
         result = self.process()
         self.assertEqual(result.status, "done", result.error)
-        self.assertIsNotNone(getattr(result, "source_path", None))
+        self.assertIsNotNone(result.source_path)
         original = Path(result.source_path)
         self.assertTrue(original.exists(), "retained original was not persisted beside the stems")
         self.assertEqual(sf.info(original).subtype, "FLOAT")
         manifest = outputs.read_manifest(Path(result.meta_path).parent)
         self.assertEqual(manifest["original"], str(original))
+        # A cache hit (skipped) still exposes the retained original path from manifest["original"].
+        skipped = self.process()
+        self.assertEqual(skipped.status, "skipped")
+        self.assertEqual(skipped.source_path, str(original))
 
     def test_valid_existing_pair_is_reusable_without_network_or_dependencies(self):
         first = self.process()
@@ -127,11 +131,100 @@ class PipelineTests(unittest.TestCase):
             quality = self.process()
         self.assertEqual(quality.status, "done", quality.error)
         self.assertEqual(separate.call_args.kwargs["model"], "htdemucs_ft")
-        self.assertNotEqual(balanced.drums_path, quality.drums_path)
+        self.assertNotEqual(balanced.outputs["drums"], quality.outputs["drums"])
         self.assertEqual(outputs.read_manifest(Path(quality.meta_path).parent)["model"], "htdemucs_ft")
         self.assertEqual(self.process().generation, quality.generation)
         self.args.model = "htdemucs"
         self.assertEqual(self.process().generation, balanced.generation)
+
+    def test_all_stems_export_preserves_existing_drums_pair_gain_and_files(self):
+        """DESIGN.md:41 / Defect 3: exporting 'all' stems must not overwrite a drums/drumless pair."""
+        def loud_separate(_audio, workdir, *_args, **_kwargs):
+            # Sum of bass+vocals+other = 1.5 > 1.0 -> drums pair applies gain ~0.666,
+            # while 'all' stems peak is 0.5 -> gain 1.0.
+            result = {}
+            for name, level in (("drums", 0.3), ("bass", 0.5), ("vocals", 0.5), ("other", 0.5)):
+                path = Path(workdir) / (name + ".wav")
+                sf.write(path, np.full((100, 2), level, dtype=np.float32), 44100, subtype="FLOAT")
+                result[name] = str(path)
+            return result
+
+        with patch.object(run, "separate_stems", side_effect=loud_separate):
+            pair = self.process()
+            self.assertEqual(pair.status, "done", pair.error)
+            pair_drums_path = Path(pair.outputs["drums"])
+            pair_nodrums_path = Path(pair.outputs["no_drums"])
+            pair_drums_before = sf.read(pair_drums_path)[0]
+            pair_nodrums_before = sf.read(pair_nodrums_path)[0]
+            ratio_before = float(pair_drums_before.max() / pair_nodrums_before.max())
+            pair_manifest_before = outputs.read_manifest(Path(pair.meta_path).parent)
+
+            self.args.stem = "all"
+            all_res = self.process()
+            self.assertEqual(all_res.status, "done", all_res.error)
+            all_drums_path = Path(all_res.outputs["drums"])
+            self.assertNotEqual(all_drums_path, pair_drums_path)
+            self.assertIn("[all]", all_drums_path.name)
+
+            # Original drums pair audio and gain ratio remain completely intact.
+            pair_drums_after = sf.read(pair_drums_path)[0]
+            ratio_after = float(pair_drums_after.max() / pair_nodrums_before.max())
+            self.assertAlmostEqual(ratio_before, ratio_after, places=5)
+            self.assertEqual(
+                outputs.read_manifest(Path(pair.meta_path).parent)["outputs"]["drums"]["sha256"],
+                pair_manifest_before["outputs"]["drums"]["sha256"],
+            )
+
+            self.args.stem = "drums"
+            reused = self.process()
+            self.assertEqual(reused.status, "skipped")
+            self.assertEqual(reused.generation, pair.generation)
+
+    def test_output_lock_waits_for_concurrent_reader_and_formats_timeout_cleanly(self):
+        """Defect 6: brief lock contention succeeds; sustained contention hides raw lock paths."""
+        first = self.process()
+        self.assertEqual(first.status, "done", first.error)
+        directory = Path(first.meta_path).parent
+        lock_file = directory.parent / ("." + directory.name + ".lock")
+
+        # Brief reader lock held on another thread releases while process_one waits -> succeeds cleanly.
+        acquired = threading.Event()
+
+        def hold_briefly():
+            with FileLock(str(lock_file), timeout=1):
+                acquired.set()
+                time.sleep(0.15)
+
+        holder = threading.Thread(target=hold_briefly, daemon=True)
+        holder.start()
+        self.assertTrue(acquired.wait(2))
+        try:
+            repeated = self.process()
+        finally:
+            holder.join(timeout=2)
+        self.assertEqual(repeated.status, "skipped", repeated.error)
+
+        # Sustained lock held on another thread past timeout fails cleanly without exposing a raw lock path.
+        acquired.clear()
+        release = threading.Event()
+
+        def hold_until_released():
+            with FileLock(str(lock_file), timeout=1):
+                acquired.set()
+                release.wait(timeout=5)
+
+        sustained = threading.Thread(target=hold_until_released, daemon=True)
+        sustained.start()
+        self.assertTrue(acquired.wait(2))
+        try:
+            with patch.object(run, "OUTPUT_LOCK_TIMEOUT", 0.2):
+                blocked = self.process()
+        finally:
+            release.set()
+            sustained.join(timeout=2)
+        self.assertEqual(blocked.status, "error")
+        self.assertIn("in use", blocked.error)
+        self.assertNotIn(".lock", blocked.error)
 
     def test_mismatched_model_manifest_is_not_reused(self):
         first = self.process()
@@ -146,7 +239,7 @@ class PipelineTests(unittest.TestCase):
     def test_read_only_audio_is_reusable_without_write_access(self):
         first = self.process()
         self.assertEqual(first.status, "done", first.error)
-        paths = [Path(first.drums_path), Path(first.nodrums_path)]
+        paths = [Path(first.outputs["drums"]), Path(first.outputs["no_drums"])]
         try:
             for path in paths:
                 path.chmod(0o444)
@@ -165,7 +258,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_partial_or_modified_output_requires_replace(self):
         result = self.process()
-        Path(result.drums_path).write_bytes(b"modified")
+        Path(result.outputs["drums"]).write_bytes(b"modified")
         repeated = self.process()
         self.assertEqual(repeated.status, "error")
         self.assertIn("--replace-existing", repeated.error)
@@ -177,16 +270,15 @@ class PipelineTests(unittest.TestCase):
     def test_deleted_stems_are_regenerated_without_replace_flag(self):
         result = self.process()
         directory = Path(result.meta_path).parent
-        # Delete only the published stems, leaving metadata.json in place.
-        for path in (Path(result.drums_path), Path(result.nodrums_path)):
+        for path in (Path(result.outputs["drums"]), Path(result.outputs["no_drums"])):
             self.assertTrue(path.is_file())
             path.unlink()
         repeated = self.process()
         self.assertEqual(repeated.status, "done", repeated.error)
         self.assertNotEqual(result.generation, repeated.generation)
         outputs.read_manifest(directory)
-        self.assertTrue(Path(result.drums_path).is_file())
-        self.assertTrue(Path(result.nodrums_path).is_file())
+        self.assertTrue(Path(result.outputs["drums"]).is_file())
+        self.assertTrue(Path(result.outputs["no_drums"]).is_file())
 
     def test_failed_directory_swap_restores_old_generation(self):
         first = self.process()
@@ -232,7 +324,8 @@ class PipelineTests(unittest.TestCase):
             result = run.process_one(inp.watch_id, self.args, source_url=inp.source_url)
         self.assertEqual(result.status, "done", result.error)
         self.assertEqual(result.title, "Drummer - Local Groove")
-        self.assertTrue(Path(result.drums_path).name.startswith("Drummer - Local Groove ["))
+        self.assertTrue(Path(result.outputs["drums"]).name.startswith("Drummer - Local Groove ["))
+        self.assertEqual(result.source_path, str(local_file.resolve()))
         manifest = outputs.read_manifest(Path(result.meta_path).parent)
         self.assertEqual(manifest["uploader"], "local file")
 
@@ -255,21 +348,31 @@ class QueueRunnerTests(unittest.TestCase):
             self.assertTrue(effective.replace_existing)
             self.assertEqual(process.call_args.kwargs["source_url"], item.source_url)
 
-    def test_cli_retry_is_bounded_to_one_attempt_per_invocation(self):
+    def test_cli_retry_is_bounded_to_one_attempt_and_skips_cancelled_jobs(self):
+        """DESIGN.md:77 / Defect 7: bare jamly run retries failed jobs once and skips cancelled ones."""
         with tempfile.TemporaryDirectory() as root:
             path = str(Path(root) / "queue.json")
-            item = Input("dQw4w9WgXcQ", "https://youtu.be/dQw4w9WgXcQ")
-            with patch.object(run, "gather_inputs", return_value=[item]), patch.object(
-                run, "process_one", return_value=run.ItemResult(item.watch_id, status="error", error="failed")
-            ) as process:
-                self.assertEqual(run.main(["--queue", path]), 1)
-            self.assertEqual(process.call_count, 1)
-            self.assertEqual(WatchQueue.from_path(path).get(item.watch_id)["status"], "error")
+            queue = WatchQueue(path)
+            queue.add("failed-job", source_url="https://example.test/fail")
+            queue.finish("failed-job", "error", error="temporary failure")
+            queue.add("cancelled-job", source_url="https://example.test/cancel")
+            queue.finish("cancelled-job", "cancelled")
+            queue.save()
+
+            seen = []
+
+            def fake_process(wid, *_args, **_kwargs):
+                seen.append(wid)
+                return run.ItemResult(wid, status="done")
+
             with patch.object(run, "gather_inputs", return_value=[]), patch.object(
-                run, "process_one", return_value=run.ItemResult(item.watch_id, status="done")
-            ) as process:
+                run, "process_one", side_effect=fake_process
+            ):
                 self.assertEqual(run.main(["--queue", path]), 0)
-            self.assertEqual(process.call_count, 1)
+            self.assertEqual(seen, ["failed-job"])
+            reloaded = WatchQueue.from_path(path)
+            self.assertEqual(reloaded.get("failed-job")["status"], "done")
+            self.assertEqual(reloaded.get("cancelled-job")["status"], "cancelled")
 
     def test_dry_run_does_not_create_queue_files(self):
         with tempfile.TemporaryDirectory() as root:
@@ -310,6 +413,7 @@ class QueueRunnerTests(unittest.TestCase):
                 all_res = run.process_one(inp.watch_id, all_args, source_url=inp.source_url)
                 self.assertEqual(all_res.status, "done")
                 self.assertEqual(set(all_res.outputs), {"drums", "bass", "other", "vocals", "metadata"})
+                self.assertIn("[all]", Path(all_res.outputs["vocals"]).name)
 
                 reused_vocals = run.process_one(inp.watch_id, args, source_url=inp.source_url)
                 self.assertEqual(reused_vocals.status, "skipped")
