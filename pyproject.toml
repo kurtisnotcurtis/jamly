@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jamly-audio-sep"
-version = "0.3.1"
+version = "0.4.1"
 description = "Split media URLs or local audio into drums/drumless, karaoke, or multi-stem tracks locally with Demucs."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
@@ -40,18 +40,11 @@ Releases = "https://github.com/kurtisnotcurtis/jamly/releases"
 Issues = "https://github.com/kurtisnotcurtis/jamly/issues"
 
 [project.scripts]
-jamly = "jamly.run:main"
-jamly-server = "jamly.server:main"
-jamly-doctor = "jamly.bootstrap:main"
-jamly-service = "jamly.service:main"
-jamly-companion = "jamly.companion:main"
+jamly = "jamly.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.14"]
 bundle = ["pyinstaller>=6.16,<7", "zstandard>=0.23"]
-
-[tool.uv.extra-build-dependencies]
-sphn = ["cmake==3.31.6"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

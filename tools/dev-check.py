@@ -73,7 +73,7 @@ def _base_interpreter(use_uv: bool) -> list[str]:
 
 
 def _runner_cmd(use_uv: bool) -> list[str]:
-    """Runner prefix for console-script invocations (jamly-doctor); empty without uv."""
+    """Runner prefix for console-script invocations (jamly doctor); empty without uv."""
     if use_uv and _have("uv"):
         return ["uv", "run", "--locked"]
     return []
@@ -136,8 +136,8 @@ def _wheel_smoke(use_uv: bool) -> bool:
         return False
     with tempfile.TemporaryDirectory(prefix="jamly-devcheck-") as state_dir:
         checks = [
-            ["jamly-doctor"],
-            ["jamly-service", "browser", "--state-dir", state_dir],
+            ["jamly", "doctor"],
+            ["jamly", "service", "browser", "--state-dir", state_dir],
             ["python", "-c", "import jamly; assert 'site-packages' in jamly.__file__"],
         ]
         for check in checks:
@@ -182,7 +182,7 @@ def main(argv=None) -> int:
 
     stages = [
         (base + ["tools/version.py", "--check"], "Lockstep version metadata"),
-        (runner + ["jamly-doctor"], "jamly-doctor health check"),
+        (runner + ["jamly", "doctor"], "jamly doctor health check"),
         (base + ["-m", "pytest", "-q"], "pytest unit suite"),
         (base + ["-m", "ruff", "check", "."], "ruff lint"),
     ]

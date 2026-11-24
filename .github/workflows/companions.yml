@@ -32,8 +32,6 @@ jobs:
             label: windows-x86_64
           - os: macos-15
             label: macos-arm64
-          - os: macos-15-intel
-            label: macos-x86_64
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -237,11 +235,9 @@ jobs:
           )
 
           mac_arm64_zip = release_dir / f"Jamly-{version}-darwin-arm64.zip"
-          mac_x86_64_zip = release_dir / f"Jamly-{version}-darwin-x86_64.zip"
           render_homebrew_cask(
               version,
               sha256_file(mac_arm64_zip),
-              sha256_file(mac_x86_64_zip),
               Path("dist/manifests/homebrew"),
               zip_path=release_dir / f"homebrew-tap-{version}.zip",
           )

@@ -123,15 +123,36 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
             return False
         return self._is_loopback_origin(parsed)
 
+    def _drain_unread_body(self, max_bytes: int = _STREAM_CHUNK_SIZE) -> None:
+        """Drain a small unread request body before closing so peers read errors instead of TCP RST."""
+        length = self._parse_content_length(max_bytes=max_bytes, allow_zero=False)
+        if length is None:
+            return
+        try:
+            self.wfile.flush()
+            self.connection.settimeout(1.0)
+            remaining = length
+            while remaining > 0:
+                chunk = self.rfile.read(remaining)
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except OSError:
+            pass
+
+    def _close_json(self, body, status: int, *, drain_body: bool = True) -> None:
+        self.close_connection = True
+        self._json(body, status)
+        if drain_body:
+            self._drain_unread_body()
+
     def _reject_unexpected_body(self) -> bool:
         if self.headers.get("Transfer-Encoding"):
-            self.close_connection = True
-            self._json({"error": "request body is not allowed"}, 400)
+            self._close_json({"error": "request body is not allowed"}, 400, drain_body=False)
             return True
         lengths = self.headers.get_all("Content-Length", [])
         if len(lengths) > 1 or (len(lengths) == 1 and lengths[0].strip() != "0"):
-            self.close_connection = True
-            self._json({"error": "request body is not allowed"}, 400)
+            self._close_json({"error": "request body is not allowed"}, 400)
             return True
         return False
 
@@ -237,8 +258,7 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
             )
 
     def _allowed_request(self, auth=True, *, bootstrap=False):
-        allowed = {"localhost", "127.0.0.1", "::1", self.app.args.host.lower(),
-                   *[host.lower() for host in self.app.args.allow_host]}
+        allowed = {"localhost", "127.0.0.1", "::1", self.app.args.host.lower()}
         try:
             host = urlsplit("//" + self.headers.get("Host", ""))
             valid_host = (host.hostname in allowed and not host.username and not host.path
@@ -248,13 +268,11 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         origin_ok = not origin or self._allowed_origin(origin) or (bootstrap and origin == "null")
         if not valid_host or not origin_ok:
-            self.close_connection = True
-            self._json({"error": "Host or browser origin is not allowed"}, 403)
+            self._close_json({"error": "Host or browser origin is not allowed"}, 403)
             return False
         if auth and not self.app.authorized(self.headers.get("Authorization", "")):
-            self.close_connection = True
-            self._json({"error": "Session expired or client not paired. Reopen Jamly, or pair the extension "
-                        "with the token from the companion's extension setup."}, 401)
+            self._close_json({"error": "Session expired or client not paired. Reopen Jamly, or pair the extension "
+                              "with the token from the companion's extension setup."}, 401)
             return False
         return True
 
@@ -319,11 +337,10 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
                 "client_proof": client_pairing_proof(
                     self.app._token, nonce, self.app._server.server_address[1],
                 ),
-            }
-            if self.app.ui.enabled:
-                payload["proof"] = pairing_proof(
+                "proof": pairing_proof(
                     self.app._token, nonce, self.app.base_url, Path(self.app.queue_path),
-                )
+                ),
+            }
             self._json(payload)
         except ValueError as exc:
             self._json({"error": str(exc)}, 400)
@@ -411,11 +428,7 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
             return
         job_output_dir = Path((item.get("options") or {}).get("output_dir") or self.app.args.output_dir).resolve()
         in_output_dir = resolved.is_relative_to(job_output_dir)
-        if not self.app.ui.enabled:
-            if not in_output_dir:
-                self._json({"error": "source file is unavailable on non-loopback binds"}, 403)
-                return
-        elif not in_output_dir:
+        if not in_output_dir:
             try:
                 expected_local = local_audio_path(item.get("source_url"))
             except InputError:
@@ -437,12 +450,10 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
     def _read_json_payload(self) -> dict | None:
         length = self._parse_content_length(max_bytes=1024 * 1024, allow_zero=True)
         if length is None:
-            self.close_connection = True
-            self._json({"error": "invalid or oversized request body"}, 400)
+            self._close_json({"error": "invalid or oversized request body"}, 400, drain_body=False)
             return None
         if self._media_type() != "application/json":
-            self.close_connection = True
-            self._json({"error": "Content-Type must be application/json"}, 415)
+            self._close_json({"error": "Content-Type must be application/json"}, 415)
             return None
         self.connection.settimeout(10)
         payload = json.loads(self.rfile.read(length))
@@ -463,8 +474,6 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
         self._json(self.app.save_preferences(payload))
 
     def _post_extension(self, payload: dict):
-        if not self.app.ui.enabled:
-            raise ValueError("Extension setup requires a loopback backend")
         if set(payload) - {"allow_origin"}:
             raise ValueError("Extension setup accepts only an optional allow_origin")
         if "allow_origin" in payload:
@@ -478,16 +487,12 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
         })
 
     def _post_stop(self, payload: dict):
-        if not self.app.ui.enabled:
-            raise ValueError("Desktop actions require a loopback backend")
         if payload:
             raise ValueError("Stop takes no options")
         self._json({"stopping": True})
         threading.Thread(target=self.app.stop, name="jamly-stop", daemon=True).start()
 
     def _post_open_folder(self, payload: dict):
-        if not self.app.ui.enabled:
-            raise ValueError("Desktop actions require a loopback backend")
         if set(payload) - {"id", "target"} or ("id" in payload and not isinstance(payload["id"], str)):
             raise ValueError("Open folder accepts only an optional job id and target")
         if "target" in payload and payload["target"] not in ("output", "source"):
@@ -592,6 +597,7 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
     def _companion_session(self):
         if not self._allowed_request(auth=False, bootstrap=True):
             return
+        body_read = False
         try:
             length = self._parse_content_length(max_bytes=4096, allow_zero=False)
             if length is None:
@@ -599,6 +605,7 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
             if self._media_type() != "application/x-www-form-urlencoded":
                 raise ValueError("Invalid companion form content type")
             self.connection.settimeout(10)
+            body_read = True
             values = parse_qs(self.rfile.read(length).decode("utf-8"),
                               strict_parsing=True, max_num_fields=1)
             if set(values) != {"ticket"} or len(values["ticket"]) != 1:
@@ -606,24 +613,20 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
             page, policy = self.app.ui.session_page(values["ticket"][0])
             self._bytes(page, "text/html; charset=utf-8", policy=policy)
         except (ValueError, UnicodeError) as exc:
-            self.close_connection = True
-            self._json({"error": str(exc)}, 400)
+            self._close_json({"error": str(exc)}, 400, drain_body=not body_read)
 
     def _upload_local_file(self, query: str):
         if not self._allowed_request():
             return
+        body_read = False
         try:
-            if not self.app.ui.enabled:
-                raise ValueError("Local file uploads require a loopback backend")
             length = self._parse_content_length(max_bytes=512 * 1024 * 1024, allow_zero=False)
             if length is None:
-                self.close_connection = True
-                self._json({"error": "invalid or oversized audio file upload (max 512 MB)"}, 400)
+                self._close_json({"error": "invalid or oversized audio file upload (max 512 MB)"}, 400, drain_body=False)
                 return
             content_type = self._media_type()
             if content_type != "application/octet-stream" and not content_type.startswith("audio/"):
-                self.close_connection = True
-                self._json({"error": "Content-Type must be application/octet-stream or audio/*"}, 415)
+                self._close_json({"error": "Content-Type must be application/octet-stream or audio/*"}, 415)
                 return
             values = parse_qs(query, strict_parsing=True, max_num_fields=1)
             raw_name = values.get("name", [""])[0].strip()
@@ -639,6 +642,7 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
             self.connection.settimeout(60)
             digest = hashlib.sha256()
             temp_path = None
+            body_read = True
             try:
                 with tempfile.NamedTemporaryFile(dir=tmp_dir, prefix=".jamly-upload-", delete=False) as tmp:
                     temp_path = Path(tmp.name)
@@ -670,8 +674,6 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
                     temp_path.unlink(missing_ok=True)
             self._json({"source": str(dest_path), "name": safe_name}, 200)
         except (ValueError, UnicodeError) as exc:
-            self.close_connection = True
-            self._json({"error": str(exc)}, 400)
+            self._close_json({"error": str(exc)}, 400, drain_body=not body_read)
         except OSError as exc:
-            self.close_connection = True
-            self._json({"error": "Cannot store uploaded audio file: %s" % exc}, 503)
+            self._close_json({"error": "Cannot store uploaded audio file: %s" % exc}, 503, drain_body=not body_read)

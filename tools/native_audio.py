@@ -154,7 +154,6 @@ def build(work: Path, jobs: int | None = None, *, rebuild: bool = False) -> Path
     platform_key = sys.platform + "-" + platform.machine().lower()
     targets = {
         "darwin-arm64": ("darwin64-arm64-cc", "aarch64-apple-darwin"),
-        "darwin-x86_64": ("darwin64-x86_64-cc", "x86_64-apple-darwin"),
         "linux-x86_64": ("linux-x86_64", "x86_64-pc-linux-gnu"),
         "win32-amd64": ("mingw64", "x86_64-w64-mingw32"),
     }

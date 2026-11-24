@@ -350,7 +350,7 @@ def _resolve_tools(args) -> tuple[str, str, str]:
         ffmpeg_dirs=[args.ffmpeg_dir] if getattr(args, "ffmpeg_dir", None) else []
     ).path
     if not ffmpeg_dir:
-        raise RuntimeError("Install ffmpeg and ffprobe on PATH; run jamly-doctor for details")
+        raise RuntimeError("Install ffmpeg and ffprobe on PATH; run `jamly doctor` for details")
     if not detect_engine():
         raise RuntimeError("Demucs is missing; reinstall Jamly")
     exe_suffix = ".exe" if os.name == "nt" else ""
@@ -496,7 +496,7 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
 
 
 def gather_inputs(args) -> list[Input]:
-    raw_inputs = list(args.input or [])
+    raw_inputs = list(getattr(args, "inputs", None) or []) + list(args.input or [])
     explicit_stdin = "-" in raw_inputs
     sources = [item for item in raw_inputs if item != "-"]
     if explicit_stdin or (not sources and not sys.stdin.isatty()):
@@ -505,14 +505,20 @@ def gather_inputs(args) -> list[Input]:
         except (ValueError, OSError):
             # Test runners and some GUI launchers supply an unreadable stdin.
             if explicit_stdin or not sources:
-                raise ValueError("Cannot read stdin; pass inputs with -i")
+                raise ValueError("Cannot read stdin; pass inputs as arguments or with -i")
     return normalize_inputs_full(sources)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="jamly", description="Create a drums/drumless audio pair")
+    parser = argparse.ArgumentParser(
+        prog="jamly split",
+        description="Split media URLs or local audio files into isolated stems",
+    )
     add_pipeline_arguments(parser)
-    parser.add_argument("-i", "--input", action="append", metavar="URL_OR_ID")
+    parser.add_argument("inputs", nargs="*", metavar="URL_OR_PATH",
+                        help="Individual media URLs, YouTube IDs, or local audio files")
+    parser.add_argument("-i", "--input", action="append", metavar="URL_OR_PATH",
+                        help="Individual media URL, YouTube ID, or local audio file (repeatable)")
     parser.add_argument("--dry-run", action="store_true", help="Preview pending jobs without changing state")
     return parser
 
@@ -546,7 +552,7 @@ def main(argv=None) -> int:
                         queue.add(item["watch_id"], retry=True)
             pending = queue.pending_items()
             if not pending:
-                _log.warn("No input or pending jobs; pass an individual media URL with -i")
+                _log.warn("No input or pending jobs; pass an individual media URL or local audio file")
                 return 2
             queue.save()
             failures = 0

@@ -26,9 +26,9 @@ def _remove(path: Path) -> None:
 
 
 class CompanionUI:
-    def __init__(self, state: Path, enabled: bool):
+    def __init__(self, state: Path):
         self.state = state
-        self.enabled = enabled
+        self.enabled = True
         self._lock = threading.Lock()
         self._launches: dict[str, tuple[float, Path]] = {}
         self._sessions: dict[str, float] = {}

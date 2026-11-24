@@ -944,7 +944,7 @@
   function renderExtensionSetup(extension) {
     byId("extension-path").textContent = extension.directory;
     byId("extension-url").textContent = location.origin;
-    byId("extension-token-cmd").textContent = extension.token_command || "jamly-service token";
+    byId("extension-token-cmd").textContent = extension.token_command || "jamly service token";
     const allowed = Array.isArray(extension.allowed_origins) ? extension.allowed_origins : [];
     byId("extension-origins").textContent = allowed.length
       ? "Authorized extension origins: " + allowed.join(", ")

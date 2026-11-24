@@ -21,7 +21,6 @@ from package_render import (  # noqa: E402
 def render_homebrew_cask(
     version: str,
     sha256_arm64: str,
-    sha256_x86_64: str,
     output_dir: Path,
     *,
     template_path: Path | None = None,
@@ -29,7 +28,6 @@ def render_homebrew_cask(
 ) -> Path:
     ver = normalize_semver(version)
     arm64_digest = normalize_sha256(sha256_arm64, uppercase=False)
-    x86_64_digest = normalize_sha256(sha256_x86_64, uppercase=False)
 
     template = template_path or (ROOT / "packaging" / "homebrew" / "Casks" / "jamly.rb")
     if not template.is_file():
@@ -42,7 +40,6 @@ def render_homebrew_cask(
         {
             "__VERSION__": ver,
             "__SHA256_ARM64__": arm64_digest,
-            "__SHA256_X86_64__": x86_64_digest,
         },
     )
     if zip_path is not None:
@@ -54,7 +51,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True, help="Release version (e.g. 0.1.0)")
     parser.add_argument("--sha256-arm64", required=True, help="SHA-256 hex digest of the macOS arm64 zip")
-    parser.add_argument("--sha256-x86_64", required=True, help="SHA-256 hex digest of the macOS x86_64 zip")
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -66,7 +62,6 @@ def main(argv: list[str] | None = None) -> int:
     cask_path = render_homebrew_cask(
         args.version,
         args.sha256_arm64,
-        args.sha256_x86_64,
         args.output_dir,
         zip_path=args.zip_path,
     )

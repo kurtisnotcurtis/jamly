@@ -6,6 +6,23 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 
 _Nothing yet._
 
+## [0.4.1] - 2026-11-24
+
+### Fixed
+- **Bundle `sympy` and `mpmath` for Apple Silicon MPS separation.** Removed `sympy` and `mpmath` from PyInstaller `excludes` in `tools/Jamly.spec` so PyTorch's macOS MPS `group_norm` path (`torch._refs` → `symbolic_shapes`) works in the standalone companion app (`tools/Jamly.spec`, `tests/test_native_audio.py`).
+- **Avoid Windows TCP reset on early HTTP error responses.** Drain small unread request bodies (up to 64 KiB) after flushing early `400`/`401`/`403`/`415` rejections before closing the socket so Winsock sends a clean `FIN` instead of `TCP RST` (`src/jamly/http_handler.py`, `tests/test_server.py`).
+
+## [0.4.0] - 2026-11-24
+
+### Changed
+- **Unified single-command CLI (`jamly`).** Replaced the five separate console scripts (`jamly`, `jamly-companion`, `jamly-server`, `jamly-doctor`, `jamly-service`) and desktop bundle flag aliases (`--cli`, `--doctor`, `--service`) with one `jamly` entrypoint dispatching `companion` (default when invoked with no arguments), `split`, `server`, `doctor`, and `service` identically across PyPI, Homebrew, WinGet, AUR, and portable bundles; `jamly split` also accepts positional inputs alongside `-i` (`src/jamly/cli.py`, `src/jamly/run.py`, `pyproject.toml`, `tools/desktop_entry.py`, `packaging/`).
+- **Loopback-only backend.** Restricted `jamly server` to loopback addresses (`127.0.0.1`, `localhost`, `::1`), removing `--allow-host` and non-loopback code paths (`src/jamly/server.py`, `src/jamly/http_handler.py`, `src/jamly/companion.py`, `src/jamly/companion_ui.py`, `src/jamly/tray.py`).
+- **Dropped Intel macOS desktop builds.** Removed `macos-15-intel` (`darwin-x86_64`) from the companion build matrix, native build targets, Homebrew cask, and `sphn` CMake extra-build workaround (`pyproject.toml`, `.github/workflows/companions.yml`, `tools/native_audio.py`, `tools/build_companion.py`, `tools/render_homebrew.py`, `packaging/homebrew/`).
+- **Playwright-captured companion preview on static site.** Replaced the hand-coded HTML/CSS companion mockup in `site/` with a live screenshot captured via `tools/capture_site_preview.mjs` (`site/companion-preview.png`, `site/index.html`, `site/styles.css`) and updated site CLI/extension pairing docs.
+
+### Fixed
+- **Active `.player-toggle` hover state.** Kept active circular stem toggles visibly highlighted while hovered (`src/jamly/web/app.css`).
+
 ## [0.3.1] - 2026-11-24
 
 ### Added

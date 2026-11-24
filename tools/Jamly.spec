@@ -30,7 +30,7 @@ for kind in ("extension", "userscripts"):
             datas.append((str(path), "share/jamly/browser/" + kind))
 
 hidden = [
-    "jamly.bootstrap", "jamly.companion", "jamly.demucs_worker", "jamly.run", "jamly.server",
+    "jamly.bootstrap", "jamly.cli", "jamly.companion", "jamly.demucs_worker", "jamly.run", "jamly.server",
     "jamly.service", "demucs.htdemucs", "demucs.hf", "yt_dlp.__main__",
 ]
 hidden += collect_submodules("yt_dlp_ejs")
@@ -48,7 +48,8 @@ a = Analysis(
         "torch._inductor", "torch._dynamo", "torch.onnx", "torch.utils.tensorboard",
         "torch.utils.benchmark", "torch.utils.bottleneck", "torch.utils.mobile_optimizer",
         "torch.utils.cpp_extension", "torch.contrib", "caffe2", "triton",
-        "sympy", "mpmath", "networkx", "jinja2", "markupsafe",
+        # Keep sympy and mpmath: PyTorch MPS group_norm imports symbolic_shapes -> sympy at runtime.
+        "networkx", "jinja2", "markupsafe",
         "pydoc", "doctest", "lib2to3", "ensurepip", "idlelib", "turtledemo",
     ],
     noarchive=False,

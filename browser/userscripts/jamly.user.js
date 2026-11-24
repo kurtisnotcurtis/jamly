@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jamly status helper
 // @namespace    https://github.com/kurtisnotcurtis/jamly
-// @version      0.3.1
+// @version      0.4.1
 // @description  Optional status/enqueue helper for a paired local Jamly backend.
 // @match        https://www.youtube.com/*
 // @match        https://music.youtube.com/*
@@ -29,7 +29,7 @@
   document.body.appendChild(panel);
 
   GM_registerMenuCommand("Pair Jamly", () => {
-    const token = window.prompt("Paste the token printed by jamly-service token:");
+    const token = window.prompt("Paste the token printed by jamly service token:");
     if (token) GM_setValue("token", token.trim());
   });
 
@@ -69,7 +69,7 @@
             resolve(value);
           } catch (error) { reject(error); }
         },
-        onerror: () => reject(new Error("Cannot reach Jamly. Start jamly-server.")),
+        onerror: () => reject(new Error("Cannot reach Jamly. Start jamly server.")),
         ontimeout: () => reject(new Error("Jamly request timed out.")),
       });
     });

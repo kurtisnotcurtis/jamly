@@ -142,7 +142,7 @@ def check_runtime(report: RunReport) -> RunReport:
 
 def main(argv=None) -> int:
     import argparse
-    parser = argparse.ArgumentParser(description="Check Jamly's installed runtime")
+    parser = argparse.ArgumentParser(prog="jamly doctor", description="Check Jamly's installed runtime")
     parser.add_argument("-V", "--version", action="version", version="%(prog)s " + __version__)
     parser.add_argument("--engine-check", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)

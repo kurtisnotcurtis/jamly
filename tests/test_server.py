@@ -20,7 +20,6 @@ from jamly.run import ItemResult
 from jamly.watch_queue import QueueError, WatchQueue
 
 TEST_TOKEN = "test-token-0123456789abcdef0123456789"
-REMOTE_TOKEN = "remote-token-0123456789abcdef01234567"
 TEST_EXT_ORIGIN = "chrome-extension://" + "a" * 32
 
 
@@ -206,6 +205,38 @@ class ServerTests(unittest.TestCase):
             code, _, _ = self.request(method, "/handshake?nonce=" + nonce, b"" if method == "POST" else None,
                                       auth=False, headers={"Origin": TEST_EXT_ORIGIN})
             self.assertEqual(code, 403)
+        # Early 403/401/415 rejections with multi-packet unread POST bodies must drain small bodies
+        # cleanly rather than triggering TCP RST on Windows before the client reads the JSON error.
+        large_payload = {"inputs": [self.source], "pad": "x" * 32768}
+        for _ in range(5):
+            code, body, _ = self.request("POST", "/add", large_payload, headers={"Origin": "https://unrelated.example"})
+            self.assertEqual(code, 403)
+            self.assertIn("error", body)
+            code, body, _ = self.request("POST", "/add", large_payload, auth=False)
+            self.assertEqual(code, 401)
+            self.assertIn("error", body)
+            code, body, _ = self.request("POST", "/add", b"x" * 32768, headers={"Content-Type": "text/plain"})
+            self.assertEqual(code, 415)
+            self.assertIn("error", body)
+        # Oversized rejected requests (> 64 KiB) must return 403 and close immediately without draining.
+        port = self.app._server.server_address[1]
+        started = time.monotonic()
+        with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
+            sock.sendall((
+                "POST /add HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{port}\r\n"
+                "Origin: https://unrelated.example\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: 10000000\r\n\r\n"
+            ).encode("ascii"))
+            chunks = []
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        self.assertTrue(b"".join(chunks).startswith(b"HTTP/1.1 403"))
+        self.assertLess(time.monotonic() - started, 0.8)
         self.assertEqual(self.app.queue.items, [])
 
     def test_extension_preflight_and_handshake_require_explicit_allowed_origin(self):
@@ -1082,26 +1113,20 @@ class HostTests(unittest.TestCase):
         for host in ("", "0.0.0.0", "evil.example", "127.0.0.1.evil.example"):
             self.assertFalse(server._is_loopback_host(host))
 
-    def test_non_loopback_rejects_local_file_paths(self):
+    def test_non_loopback_binds_and_allow_host_are_rejected(self):
+        with self.assertRaises(SystemExit):
+            server.build_parser().parse_args(["--allow-host", "proxy.example"])
         with tempfile.TemporaryDirectory() as root:
             state = Path(root)
-            wav = state / "local.wav"
-            wav.write_bytes(b"RIFF")
-            token_file = state / "remote.token"
-            token_file.write_text(REMOTE_TOKEN + "\n", encoding="utf-8")
-            args = server.build_parser().parse_args([
-                "--host", "0.0.0.0", "--port", "0",
-                "--queue", str(state / "queue.json"),
-                "--state-dir", str(state),
-                "--output-dir", str(state / "output"),
-                "--server-token-file", str(token_file),
-            ])
-            app = server.ItemServer(args)
-            try:
-                with self.assertRaisesRegex(ValueError, "loopback"):
-                    app.enqueue([str(wav)])
-            finally:
-                app.stop()
+            for host in ("0.0.0.0", "evil.example", ""):
+                args = server.build_parser().parse_args([
+                    "--host", host, "--port", "0",
+                    "--queue", str(state / "queue.json"),
+                    "--state-dir", str(state),
+                    "--output-dir", str(state / "output"),
+                ])
+                with self.subTest(host=host), self.assertRaisesRegex(ValueError, "loopback"):
+                    server.ItemServer(args)
 
     def test_cli_token_flag_removed_and_short_tokens_rejected(self):
         with self.assertRaises(SystemExit):

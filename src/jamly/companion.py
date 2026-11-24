@@ -98,8 +98,6 @@ def _server_arguments(args, state: Path, queue: Path) -> list[str]:
             command.extend((option, str(value)))
     for origin in args.allow_origin:
         command.extend(("--allow-origin", origin))
-    for host in args.allow_host:
-        command.extend(("--allow-host", host))
     if getattr(args, "no_tray", False):
         command.append("--no-tray")
     return command
@@ -172,6 +170,7 @@ def show_startup_error(state: Path, message: str) -> None:
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
+    parser.prog = "jamly companion"
     parser.description = "Open the local Jamly exporter; closing the page does not stop jobs"
     parser.add_argument("--no-browser", action="store_true", help="Print the private launch-file location")
     state = state_directory()

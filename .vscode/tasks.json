@@ -30,7 +30,7 @@
             "label": "run-server",
             "type": "process",
             "command": "uv",
-            "args": ["run", "--locked", "jamly-server"],
+            "args": ["run", "--locked", "jamly", "server"],
             "options": {"cwd": "${workspaceFolder}"},
             "problemMatcher": []
         }
