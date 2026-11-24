@@ -10,6 +10,7 @@ _Nothing yet._
 
 ### Fixed
 - **Bundle `sympy` and `mpmath` for Apple Silicon MPS separation.** Removed `sympy` and `mpmath` from PyInstaller `excludes` in `tools/Jamly.spec` so PyTorch's macOS MPS `group_norm` path (`torch._refs` → `symbolic_shapes`) works in the standalone companion app (`tools/Jamly.spec`, `tests/test_native_audio.py`).
+- **Avoid Windows TCP reset on early HTTP error responses.** Drain small unread request bodies (up to 64 KiB) after flushing early `400`/`401`/`403`/`415` rejections before closing the socket so Winsock sends a clean `FIN` instead of `TCP RST` (`src/jamly/http_handler.py`, `tests/test_server.py`).
 
 ## [0.4.0] - 2026-11-24
 

@@ -205,6 +205,38 @@ class ServerTests(unittest.TestCase):
             code, _, _ = self.request(method, "/handshake?nonce=" + nonce, b"" if method == "POST" else None,
                                       auth=False, headers={"Origin": TEST_EXT_ORIGIN})
             self.assertEqual(code, 403)
+        # Early 403/401/415 rejections with multi-packet unread POST bodies must drain small bodies
+        # cleanly rather than triggering TCP RST on Windows before the client reads the JSON error.
+        large_payload = {"inputs": [self.source], "pad": "x" * 32768}
+        for _ in range(5):
+            code, body, _ = self.request("POST", "/add", large_payload, headers={"Origin": "https://unrelated.example"})
+            self.assertEqual(code, 403)
+            self.assertIn("error", body)
+            code, body, _ = self.request("POST", "/add", large_payload, auth=False)
+            self.assertEqual(code, 401)
+            self.assertIn("error", body)
+            code, body, _ = self.request("POST", "/add", b"x" * 32768, headers={"Content-Type": "text/plain"})
+            self.assertEqual(code, 415)
+            self.assertIn("error", body)
+        # Oversized rejected requests (> 64 KiB) must return 403 and close immediately without draining.
+        port = self.app._server.server_address[1]
+        started = time.monotonic()
+        with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
+            sock.sendall((
+                "POST /add HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{port}\r\n"
+                "Origin: https://unrelated.example\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: 10000000\r\n\r\n"
+            ).encode("ascii"))
+            chunks = []
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        self.assertTrue(b"".join(chunks).startswith(b"HTTP/1.1 403"))
+        self.assertLess(time.monotonic() - started, 0.8)
         self.assertEqual(self.app.queue.items, [])
 
     def test_extension_preflight_and_handshake_require_explicit_allowed_origin(self):
