@@ -4,6 +4,10 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.3.1] - 2026-11-24
+
 ### Added
 - **Playwright E2E tests and extension options unit tests.** Added a fast deterministic Playwright E2E suite (`tests/e2e/companion.e2e.test.mjs`, `tests/e2e/mock_server.py`) covering launch-file pairing, settings persistence, error/retry, live progress/cancel, local uploads, multi-preset practice player playback and stem switching, search/status/model filters, export folder/clear/rescan actions, manual pairing, clean shutdown, and unpacked browser extension pairing/origin enforcement/popup submission; added unit tests for `jamly_options.js` (`browser/extension/jamly_options_test.js`); and wired both into `tools/dev-check.py` (`--e2e`) and `.github/workflows/ci.yml`.
 
@@ -12,6 +16,7 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 
 ### Fixed
 - **Enforce extension origin authorization during pairing and status checks.** Added `POST /handshake` support and switched `jamlyClient.verifyBackend` to `POST /handshake` so Chromium/Edge always sends the `Origin` header even when the extension holds `host_permissions`, rejecting unauthorized extension origins at pairing time before any token is sent (`src/jamly/http_handler.py`, `browser/extension/jamly_client.js`, `src/jamly/web/jamly_client.js`).
+- **Avoid macOS bind DNS stalls and extension options form hydration races.** Overrode `_HTTPServer.server_bind` to skip `socket.getfqdn()` reverse-DNS lookups on server startup (`src/jamly/server.py`) and prevented asynchronous `chrome.storage.local.get` hydration from overwriting values already typed into the extension options page (`browser/extension/jamly_options.js`).
 
 ## [0.3.0] - 2026-11-23
 
