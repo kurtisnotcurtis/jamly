@@ -403,6 +403,11 @@ class BundleIconTests(unittest.TestCase):
         self.assertEqual(spec_text.count("icon=win_icon"), 2)
         self.assertIn("icon=mac_icon", spec_text)
 
+    def test_jamly_spec_does_not_exclude_sympy_or_mpmath(self):
+        spec_text = (Path(__file__).resolve().parents[1] / "tools" / "Jamly.spec").read_text(encoding="utf-8")
+        self.assertNotIn('"sympy"', spec_text)
+        self.assertNotIn('"mpmath"', spec_text)
+
     def test_icon_builders_encode_dib_and_containers(self):
         import base64
         import struct

@@ -48,7 +48,8 @@ a = Analysis(
         "torch._inductor", "torch._dynamo", "torch.onnx", "torch.utils.tensorboard",
         "torch.utils.benchmark", "torch.utils.bottleneck", "torch.utils.mobile_optimizer",
         "torch.utils.cpp_extension", "torch.contrib", "caffe2", "triton",
-        "sympy", "mpmath", "networkx", "jinja2", "markupsafe",
+        # Keep sympy and mpmath: PyTorch MPS group_norm imports symbolic_shapes -> sympy at runtime.
+        "networkx", "jinja2", "markupsafe",
         "pydoc", "doctest", "lib2to3", "ensurepip", "idlelib", "turtledemo",
     ],
     noarchive=False,
