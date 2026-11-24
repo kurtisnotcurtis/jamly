@@ -27,10 +27,7 @@ def main() -> int:
         sys.stdout = sys.stdout or log
         sys.stderr = sys.stderr or log
     arguments = sys.argv[1:]
-    aliases = {"--doctor": "jamly.bootstrap", "--cli": "jamly.run", "--service": "jamly.service"}
     allowed = {"yt_dlp", "jamly.demucs_worker", "jamly.server", "jamly.bootstrap", "jamly.run", "jamly.service"}
-    if arguments and arguments[0] in aliases:
-        arguments = ["--module", aliases[arguments[0]], *arguments[1:]]
     if arguments[:1] == ["--module"]:
         if len(arguments) < 2 or arguments[1] not in allowed:
             print("Unknown bundled runtime module", file=sys.stderr)
@@ -38,12 +35,13 @@ def main() -> int:
         sys.argv = [arguments[1], *arguments[2:]]
         runpy.run_module(arguments[1], run_name="__main__")
         return 0
-    from jamly.companion import main as launch
+    from jamly.cli import main as cli_main
     try:
-        return launch(arguments)
+        return cli_main(arguments)
     except Exception as exc:
         traceback.print_exc()
-        if "--no-browser" not in arguments and Path(sys.executable).resolve().stem.lower() == "jamly":
+        is_companion = not arguments or arguments[0] == "companion"
+        if is_companion and "--no-browser" not in arguments and Path(sys.executable).resolve().stem.lower() == "jamly":
             from jamly.companion import show_startup_error
             show_startup_error(state, str(exc))
         return 2

@@ -29,7 +29,7 @@
   document.body.appendChild(panel);
 
   GM_registerMenuCommand("Pair Jamly", () => {
-    const token = window.prompt("Paste the token printed by jamly-service token:");
+    const token = window.prompt("Paste the token printed by jamly service token:");
     if (token) GM_setValue("token", token.trim());
   });
 
@@ -69,7 +69,7 @@
             resolve(value);
           } catch (error) { reject(error); }
         },
-        onerror: () => reject(new Error("Cannot reach Jamly. Start jamly-server.")),
+        onerror: () => reject(new Error("Cannot reach Jamly. Start jamly server.")),
         ontimeout: () => reject(new Error("Jamly request timed out.")),
       });
     });

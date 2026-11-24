@@ -237,8 +237,7 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
             )
 
     def _allowed_request(self, auth=True, *, bootstrap=False):
-        allowed = {"localhost", "127.0.0.1", "::1", self.app.args.host.lower(),
-                   *[host.lower() for host in self.app.args.allow_host]}
+        allowed = {"localhost", "127.0.0.1", "::1", self.app.args.host.lower()}
         try:
             host = urlsplit("//" + self.headers.get("Host", ""))
             valid_host = (host.hostname in allowed and not host.username and not host.path
@@ -319,11 +318,10 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
                 "client_proof": client_pairing_proof(
                     self.app._token, nonce, self.app._server.server_address[1],
                 ),
-            }
-            if self.app.ui.enabled:
-                payload["proof"] = pairing_proof(
+                "proof": pairing_proof(
                     self.app._token, nonce, self.app.base_url, Path(self.app.queue_path),
-                )
+                ),
+            }
             self._json(payload)
         except ValueError as exc:
             self._json({"error": str(exc)}, 400)
@@ -411,11 +409,7 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
             return
         job_output_dir = Path((item.get("options") or {}).get("output_dir") or self.app.args.output_dir).resolve()
         in_output_dir = resolved.is_relative_to(job_output_dir)
-        if not self.app.ui.enabled:
-            if not in_output_dir:
-                self._json({"error": "source file is unavailable on non-loopback binds"}, 403)
-                return
-        elif not in_output_dir:
+        if not in_output_dir:
             try:
                 expected_local = local_audio_path(item.get("source_url"))
             except InputError:
@@ -463,8 +457,6 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
         self._json(self.app.save_preferences(payload))
 
     def _post_extension(self, payload: dict):
-        if not self.app.ui.enabled:
-            raise ValueError("Extension setup requires a loopback backend")
         if set(payload) - {"allow_origin"}:
             raise ValueError("Extension setup accepts only an optional allow_origin")
         if "allow_origin" in payload:
@@ -478,16 +470,12 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
         })
 
     def _post_stop(self, payload: dict):
-        if not self.app.ui.enabled:
-            raise ValueError("Desktop actions require a loopback backend")
         if payload:
             raise ValueError("Stop takes no options")
         self._json({"stopping": True})
         threading.Thread(target=self.app.stop, name="jamly-stop", daemon=True).start()
 
     def _post_open_folder(self, payload: dict):
-        if not self.app.ui.enabled:
-            raise ValueError("Desktop actions require a loopback backend")
         if set(payload) - {"id", "target"} or ("id" in payload and not isinstance(payload["id"], str)):
             raise ValueError("Open folder accepts only an optional job id and target")
         if "target" in payload and payload["target"] not in ("output", "source"):
@@ -613,8 +601,6 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
         if not self._allowed_request():
             return
         try:
-            if not self.app.ui.enabled:
-                raise ValueError("Local file uploads require a loopback backend")
             length = self._parse_content_length(max_bytes=512 * 1024 * 1024, allow_zero=False)
             if length is None:
                 self.close_connection = True

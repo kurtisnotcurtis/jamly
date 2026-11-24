@@ -165,7 +165,7 @@ try {
     "--output-dir", path.join(root, "exports"),
   ];
   const launched = JSON.parse(await command(runtime || python,
-    runtime ? arguments_ : ["-m", "jamly.companion", ...arguments_]));
+    runtime ? ["companion", ...arguments_] : ["-m", "jamly.companion", ...arguments_]));
   backend = launched.url;
   token = (await fs.readFile(path.join(state, "server-token"), "utf8")).trim();
   const profile = path.join(root, "chrome");

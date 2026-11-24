@@ -56,7 +56,7 @@ class CompanionLauncherTests(unittest.TestCase):
 
     def test_companion_ui_serves_favicon_and_allows_self_images_in_csp(self):
         with tempfile.TemporaryDirectory() as root:
-            ui = companion_ui.CompanionUI(Path(root), enabled=True)
+            ui = companion_ui.CompanionUI(Path(root))
             html_bytes, html_type = ui.asset("/app/")
             icon_bytes, icon_type = ui.asset("/app/jamly.svg")
             repo_icon = Path(__file__).resolve().parents[1] / "site" / "jamly-mark.svg"

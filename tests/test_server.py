@@ -20,7 +20,6 @@ from jamly.run import ItemResult
 from jamly.watch_queue import QueueError, WatchQueue
 
 TEST_TOKEN = "test-token-0123456789abcdef0123456789"
-REMOTE_TOKEN = "remote-token-0123456789abcdef01234567"
 TEST_EXT_ORIGIN = "chrome-extension://" + "a" * 32
 
 
@@ -1082,26 +1081,20 @@ class HostTests(unittest.TestCase):
         for host in ("", "0.0.0.0", "evil.example", "127.0.0.1.evil.example"):
             self.assertFalse(server._is_loopback_host(host))
 
-    def test_non_loopback_rejects_local_file_paths(self):
+    def test_non_loopback_binds_and_allow_host_are_rejected(self):
+        with self.assertRaises(SystemExit):
+            server.build_parser().parse_args(["--allow-host", "proxy.example"])
         with tempfile.TemporaryDirectory() as root:
             state = Path(root)
-            wav = state / "local.wav"
-            wav.write_bytes(b"RIFF")
-            token_file = state / "remote.token"
-            token_file.write_text(REMOTE_TOKEN + "\n", encoding="utf-8")
-            args = server.build_parser().parse_args([
-                "--host", "0.0.0.0", "--port", "0",
-                "--queue", str(state / "queue.json"),
-                "--state-dir", str(state),
-                "--output-dir", str(state / "output"),
-                "--server-token-file", str(token_file),
-            ])
-            app = server.ItemServer(args)
-            try:
-                with self.assertRaisesRegex(ValueError, "loopback"):
-                    app.enqueue([str(wav)])
-            finally:
-                app.stop()
+            for host in ("0.0.0.0", "evil.example", ""):
+                args = server.build_parser().parse_args([
+                    "--host", host, "--port", "0",
+                    "--queue", str(state / "queue.json"),
+                    "--state-dir", str(state),
+                    "--output-dir", str(state / "output"),
+                ])
+                with self.subTest(host=host), self.assertRaisesRegex(ValueError, "loopback"):
+                    server.ItemServer(args)
 
     def test_cli_token_flag_removed_and_short_tokens_rejected(self):
         with self.assertRaises(SystemExit):

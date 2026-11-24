@@ -320,7 +320,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   cursor: pointer;
 }
 .player-toggle:hover:not(.active) { border-color: var(--accent); background: var(--surface-hover); }
-.player-toggle.active {
+.player-toggle.active, .player-toggle.active:hover:not(:disabled) {
   background: linear-gradient(180deg, #f6a0b1 0%, var(--accent) 100%);
   border-color: var(--accent);
   color: var(--accent-ink);

@@ -9,7 +9,7 @@ A personal Homebrew tap is used while `Jamly.app` remains an unsigned, unnotariz
 1. Create a public GitHub repository named `homebrew-tap` under `kurtisnotcurtis` (`https://github.com/kurtisnotcurtis/homebrew-tap`).
 2. Download `homebrew-tap-<version>.zip` from the GitHub Release assets (or render locally):
    ```sh
-   python tools/render_homebrew.py --version <version> --sha256-arm64 <arm64_sha256> --sha256-x86_64 <x86_64_sha256>
+   python tools/render_homebrew.py --version <version> --sha256-arm64 <arm64_sha256>
    ```
 3. Copy `Casks/jamly.rb` into the `homebrew-tap` repository, commit, and push to `main`.
 4. Test installation and cask linting on macOS:

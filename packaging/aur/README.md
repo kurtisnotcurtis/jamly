@@ -2,7 +2,7 @@
 
 These templates are used by [`.github/workflows/companions.yml`](../../.github/workflows/companions.yml) to generate a ready-to-push Arch User Repository package (`aur-jamly-bin-<version>.zip`) for each GitHub Release.
 
-`jamly-bin` repackages the self-contained Linux x64 companion tarball (`Jamly-<version>-linux-x86_64.tar.gz`) into `/opt/jamly-bin/` with `/usr/bin/jamly`, `/usr/bin/jamly-runtime`, a desktop entry, and the Jamly icon. `options=('!strip' '!debug')` is set because stripping PyInstaller executables removes the embedded archive.
+`jamly-bin` repackages the self-contained Linux x64 companion tarball (`Jamly-<version>-linux-x86_64.tar.gz`) into `/opt/jamly-bin/` with `/usr/bin/jamly`, a desktop entry, and the Jamly icon. `options=('!strip' '!debug')` is set because stripping PyInstaller executables removes the embedded archive.
 
 ## Submitting or Updating `jamly-bin` on AUR
 

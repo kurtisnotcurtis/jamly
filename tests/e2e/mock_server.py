@@ -26,8 +26,8 @@ from jamly.outputs import PROCESSING_VERSION, checksum  # noqa: E402
 from jamly.run import ItemResult, _stem_file_prefix  # noqa: E402
 
 
-def _write_tone(path: Path, freq: float, fmt: str, ffmpeg: str | None) -> None:
-    frames = 22050  # 0.5 seconds at 44.1 kHz
+def _write_tone(path: Path, freq: float, fmt: str, ffmpeg: str | None, *, seconds: float = 0.5) -> None:
+    frames = max(1, int(round(44100 * seconds)))
     t = np.arange(frames, dtype=np.float32) / 44100.0
     wave = 0.25 * np.sin(2.0 * np.pi * freq * t).astype(np.float32)
     stereo = np.stack((wave, wave), axis=1)
@@ -47,6 +47,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--tone-seconds", type=float, default=0.5)
     args = parser.parse_args()
 
     state_dir = args.state_dir.resolve()
@@ -115,7 +116,7 @@ def main() -> int:
         freqs = (220.0, 330.0, 440.0, 550.0, 660.0, 770.0)
         for index, kind in enumerate(expected_output_kinds(stem, model)):
             dest = out_root / f"{prefix}_{kind}.{fmt}"
-            _write_tone(dest, freqs[index % len(freqs)], fmt, ffmpeg_exe)
+            _write_tone(dest, freqs[index % len(freqs)], fmt, ffmpeg_exe, seconds=args.tone_seconds)
             stem_paths[kind] = str(dest)
             manifest_outputs[kind] = {"file": dest.name, "sha256": checksum(dest)}
 
@@ -125,7 +126,7 @@ def main() -> int:
             source_path = str(local_src)
         else:
             orig_dest = out_root / f"{_stem_file_prefix(wid, ('Artist', title))}_original.wav"
-            _write_tone(orig_dest, 180.0, "wav", None)
+            _write_tone(orig_dest, 180.0, "wav", None, seconds=args.tone_seconds)
             orig_name = orig_dest.name
             source_path = str(orig_dest)
 

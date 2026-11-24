@@ -35,7 +35,6 @@ def python_notices(destination: Path) -> None:
         raise RuntimeError("Unrecognized Python distribution build marker")
     triples = {
         ("darwin", "arm64"): "aarch64-apple-darwin",
-        ("darwin", "x86_64"): "x86_64-apple-darwin",
         ("linux", "x86_64"): "x86_64-unknown-linux-gnu",
         ("win32", "amd64"): "x86_64-pc-windows-msvc",
     }

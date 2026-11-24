@@ -58,7 +58,7 @@ test("an empty token is rejected before requesting permissions or saving", async
   await tick();
   elements.token.value = "   ";
   await elements.save.events.click();
-  assert.match(elements.status.textContent, /jamly-service token/);
+  assert.match(elements.status.textContent, /jamly service token/);
   assert.equal(calls.permissions.length, 0);
   assert.equal(calls.saved.length, 0);
 });

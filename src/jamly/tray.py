@@ -410,6 +410,6 @@ if sys.platform == "win32":
 
 def create_tray(app, *, enabled: bool = True):
     """Create a desktop system tray controller when enabled and supported."""
-    if not enabled or not app.ui.enabled or sys.platform != "win32":
+    if not enabled or sys.platform != "win32":
         return NullTray()
     return WindowsTray(app)

@@ -28,12 +28,6 @@ exec /opt/jamly-bin/Jamly "$@"
 EOF
     chmod 0755 "$pkgdir/usr/bin/jamly"
 
-    cat <<'EOF' > "$pkgdir/usr/bin/jamly-runtime"
-#!/bin/sh
-exec /opt/jamly-bin/jamly-runtime "$@"
-EOF
-    chmod 0755 "$pkgdir/usr/bin/jamly-runtime"
-
     install -Dm644 "$srcdir/jamly.desktop" "$pkgdir/usr/share/applications/jamly.desktop"
     install -Dm644 "$srcdir/jamly.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/jamly.svg"
     if [ -f "$srcdir/Jamly/_internal/notices/JAMLY-LICENSE.md" ]; then

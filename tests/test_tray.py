@@ -50,14 +50,12 @@ class TrayTests(unittest.TestCase):
             finally:
                 app.stop()
 
-    def test_create_tray_returns_null_when_disabled_or_non_loopback(self):
+    def test_create_tray_returns_null_when_disabled(self):
         with tempfile.TemporaryDirectory() as root:
             args = server.build_parser().parse_args(["--state-dir", root, "--port", "0"])
             app = server.ItemServer(args)
             try:
                 self.assertIsInstance(tray.create_tray(app, enabled=False), tray.NullTray)
-                app.ui.enabled = False
-                self.assertIsInstance(tray.create_tray(app, enabled=True), tray.NullTray)
             finally:
                 app.stop()
 

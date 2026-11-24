@@ -114,17 +114,18 @@ def _discover_manifest(meta_root: Path, meta_path: Path) -> dict | None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Jamly local backend", allow_abbrev=False)
+    parser = argparse.ArgumentParser(
+        prog="jamly server", description="Run the local loopback Jamly backend", allow_abbrev=False,
+    )
     add_pipeline_arguments(parser)
-    parser.add_argument("--config", help="JSON configuration written by jamly-service")
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--config", help="JSON configuration written by jamly service")
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="Loopback bind address (127.0.0.1, localhost, or ::1)")
     parser.add_argument("--port", type=_port, default=8765)
     parser.add_argument("--server-token-file", default=None,
                         help="Read the pairing token from a file (or set JAMLY_SERVER_TOKEN)")
     parser.add_argument("--allow-origin", action="append", default=[],
                         help="Additional exact browser origin; never use '*'")
-    parser.add_argument("--allow-host", action="append", default=[],
-                        help="Additional HTTP Host name for an explicitly configured proxy/LAN")
     parser.add_argument("--no-tray", action="store_true",
                         help="Disable the desktop system tray icon")
     return parser
@@ -162,8 +163,8 @@ class ItemServer:
         token_file = getattr(args, "server_token_file", None)
         explicit_token = read_token_file(token_file) if token_file else os.environ.get("JAMLY_SERVER_TOKEN")
         args.host = args.host.strip()
-        if not args.host or not _is_loopback_host(args.host) and not explicit_token:
-            raise ValueError("Non-loopback binds require JAMLY_SERVER_TOKEN or --server-token-file")
+        if not args.host or not _is_loopback_host(args.host):
+            raise ValueError("Jamly only binds to loopback addresses (127.0.0.1, localhost, or ::1)")
         self._allow_origins = [validate_allowed_origin(origin) for origin in args.allow_origin]
         self.state_dir, queue_path = runtime_paths(args)
         self.queue_path = str(queue_path)
@@ -187,7 +188,7 @@ class ItemServer:
             self._tray = None
             self._error = None
             self._extension_origins = self._load_extension_origins()
-            self.ui = CompanionUI(self.state_dir, enabled=_is_loopback_host(args.host))
+            self.ui = CompanionUI(self.state_dir)
             self._prune_orphaned_uploads()
             server_type = _IPv6Server if ":" in args.host else _HTTPServer
             self._server = server_type((args.host, args.port), QueueStatusHandler)
@@ -521,8 +522,6 @@ class ItemServer:
     def enqueue(self, inputs, titles=None, replace=False, *, model=_UNSET, audio_format=_UNSET,
                 stem=_UNSET) -> int:
         normalized = [make_input(source) for source in inputs]
-        if not self.ui.enabled and any(item.watch_id.startswith("file-") for item in normalized):
-            raise ValueError("Local file paths require a loopback backend")
         if model is not _UNSET:
             validate_model(model)
         if audio_format is not _UNSET:
@@ -796,11 +795,10 @@ class ItemServer:
         with self._stop_lock:
             if self._stop.is_set() or self._closed:
                 return
-            if self.ui.enabled:
-                write_private_json(instance_path(self.state_dir, Path(self.queue_path)), {
-                    "port": self._server.server_address[1], "host": self._server.server_address[0],
-                    "pid": os.getpid(),
-                })
+            write_private_json(instance_path(self.state_dir, Path(self.queue_path)), {
+                "port": self._server.server_address[1], "host": self._server.server_address[0],
+                "pid": os.getpid(),
+            })
             self._serving = True
             self._serve_ident = threading.get_ident()
             self._worker = threading.Thread(target=self._loop, name="jamly-worker", daemon=True)
@@ -833,8 +831,7 @@ class ItemServer:
                     raise RuntimeError("The worker has not stopped; queue ownership was retained")
             with self._status_lock:
                 self._server.server_close()
-                if self.ui.enabled:
-                    instance_path(self.state_dir, Path(self.queue_path)).unlink(missing_ok=True)
+                instance_path(self.state_dir, Path(self.queue_path)).unlink(missing_ok=True)
                 self.ui.close()
                 self._owner.__exit__(None, None, None)
                 self._closed = True
@@ -848,7 +845,7 @@ def main(argv=None) -> int:
         args = parse_configured_args(parser, argv, preferences=True)
         server = ItemServer(args)
     except (OSError, ValueError, QueueError) as exc:
-        print("jamly-server: %s" % exc, file=sys.stderr)
+        print("jamly server: %s" % exc, file=sys.stderr)
         return 2
     print("Jamly listening on %s:%d" % (args.host, server._server.server_address[1]), flush=True)
     print("Pair browsers with: " + token_command(server.state_dir), flush=True)

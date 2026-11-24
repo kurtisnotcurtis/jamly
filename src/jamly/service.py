@@ -129,7 +129,7 @@ def export_browser_assets(state: Path, kind: str) -> Path:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Manage the per-user Jamly backend")
+    parser = argparse.ArgumentParser(prog="jamly service", description="Manage the per-user Jamly backend")
     parser.add_argument("action", choices=(
         "install", "uninstall", "start", "stop", "restart", "status", "token", "run", "browser", "userscript",
     ))
@@ -166,7 +166,7 @@ def main(argv=None) -> int:
                 report = replace(report, ffmpeg=detect_ffmpeg([args.ffmpeg_dir]))
             report = check_runtime(report)
             if not report.ready:
-                raise ValueError("Run jamly-doctor and install missing dependencies before installing the service")
+                raise ValueError("Run `jamly doctor` and install missing dependencies before installing the service")
             settings = dict(pipeline_options(args), state_dir=str(state), host="127.0.0.1",
                             port=args.port, ffmpeg_dir=report.ffmpeg.path, queue=str(queue_path))
             if args.dry_run:
@@ -193,7 +193,7 @@ def main(argv=None) -> int:
             print("Pair your browser with: " + token_command(state))
         return 0
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
-        print("jamly-service: %s" % exc, file=sys.stderr)
+        print("jamly service: %s" % exc, file=sys.stderr)
         return 1
 
 

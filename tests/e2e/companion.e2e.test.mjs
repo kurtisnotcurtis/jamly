@@ -319,7 +319,7 @@ test("companion UI DOM E2E: pairing, uploads, filters, player, extension setup, 
   await page.locator("details summary", { hasText: "Optional Chrome / Edge extension" }).click();
   await page.click("#prepare-extension");
   await page.waitForSelector("#extension-setup:not([hidden])");
-  assert.match(await page.textContent("#extension-token-cmd"), /jamly-service token/);
+  assert.match(await page.textContent("#extension-token-cmd"), /jamly service token/);
   const fullHtml = await page.content();
   assert.equal(fullHtml.includes(server.info.token), false, "Master token must never appear in companion DOM");
 

@@ -15,7 +15,7 @@
         url: jamlyClient.baseURL(byId("url").value.trim()),
         token: byId("token").value.trim(),
       };
-      if (!config.token) throw new Error("Enter the token from 'jamly-service token'.");
+      if (!config.token) throw new Error("Enter the token from 'jamly service token'.");
       const parsed = new URL(config.url);
       const origin = parsed.protocol + "//" + parsed.hostname + "/*";
       const granted = await chrome.permissions.request({ origins: [origin] });

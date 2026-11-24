@@ -169,7 +169,7 @@ def validate_extension_origin(origin: str) -> str:
 
 
 def token_command(state_dir: Path) -> str:
-    command = ["jamly-service", "token", "--state-dir", str(state_dir)]
+    command = ["jamly", "service", "token", "--state-dir", str(state_dir)]
     return subprocess.list2cmdline(command) if os.name == "nt" else shlex.join(command)
 
 

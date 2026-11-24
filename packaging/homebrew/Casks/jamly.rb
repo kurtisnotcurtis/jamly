@@ -1,11 +1,8 @@
 cask "jamly" do
-  arch arm: "arm64", intel: "x86_64"
-
   version "__VERSION__"
-  sha256 arm:   "__SHA256_ARM64__",
-         intel: "__SHA256_X86_64__"
+  sha256 "__SHA256_ARM64__"
 
-  url "https://github.com/kurtisnotcurtis/jamly/releases/download/v#{version}/Jamly-#{version}-darwin-#{arch}.zip"
+  url "https://github.com/kurtisnotcurtis/jamly/releases/download/v#{version}/Jamly-#{version}-darwin-arm64.zip"
   name "Jamly"
   desc "Split media URLs or local audio into drums, drumless, or multi-stem tracks locally"
   homepage "https://kurtisnotcurtis.github.io/jamly/"
@@ -15,12 +12,11 @@ cask "jamly" do
     strategy :github_latest
   end
 
+  depends_on arch: :arm64
   depends_on macos: :ventura
 
   app "Jamly.app"
   command_wrapper "jamly",
-                  executable: "#{appdir}/Jamly.app/Contents/MacOS/Jamly"
-  command_wrapper "jamly-runtime",
                   executable: "#{appdir}/Jamly.app/Contents/MacOS/jamly-runtime"
 
   zap trash: [

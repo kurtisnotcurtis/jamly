@@ -254,7 +254,9 @@ class WingetManifestTests(unittest.TestCase):
             self.assertIn("PackageVersion: 0.1.0", installer_text)
             self.assertIn("ReleaseDate: 2026-11-17", installer_text)
             self.assertIn("InstallerSha256: " + digest.upper(), installer_text)
-            self.assertIn("RelativeFilePath: Jamly\\Jamly.exe", installer_text)
+            self.assertIn("RelativeFilePath: Jamly\\jamly-runtime.exe", installer_text)
+            self.assertIn("PortableCommandAlias: jamly", installer_text)
+            self.assertNotIn("PortableCommandAlias: jamly-runtime", installer_text)
             self.assertNotIn("__", installer_text)
             with zipfile.ZipFile(zip_path) as zf:
                 names = sorted(zf.namelist())
@@ -318,7 +320,6 @@ class HomebrewCaskTests(unittest.TestCase):
         import zipfile
 
         arm_digest = "AA" * 32
-        intel_digest = "BB" * 32
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             out_dir = base / "homebrew"
@@ -326,7 +327,6 @@ class HomebrewCaskTests(unittest.TestCase):
             cask_path = homebrew_tool.render_homebrew_cask(
                 "v0.1.1",
                 arm_digest,
-                intel_digest,
                 out_dir,
                 zip_path=zip_path,
             )
@@ -334,9 +334,9 @@ class HomebrewCaskTests(unittest.TestCase):
             cask_text = cask_path.read_text(encoding="utf-8")
             self.assertIn('version "0.1.1"', cask_text)
             self.assertIn(arm_digest.lower(), cask_text)
-            self.assertIn(intel_digest.lower(), cask_text)
+            self.assertIn("depends_on arch: :arm64", cask_text)
             self.assertIn('command_wrapper "jamly"', cask_text)
-            self.assertIn('command_wrapper "jamly-runtime"', cask_text)
+            self.assertNotIn('command_wrapper "jamly-runtime"', cask_text)
             self.assertNotIn("__", cask_text)
             with zipfile.ZipFile(zip_path) as zf:
                 names = sorted(zf.namelist())

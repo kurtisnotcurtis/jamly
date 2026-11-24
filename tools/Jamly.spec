@@ -30,7 +30,7 @@ for kind in ("extension", "userscripts"):
             datas.append((str(path), "share/jamly/browser/" + kind))
 
 hidden = [
-    "jamly.bootstrap", "jamly.companion", "jamly.demucs_worker", "jamly.run", "jamly.server",
+    "jamly.bootstrap", "jamly.cli", "jamly.companion", "jamly.demucs_worker", "jamly.run", "jamly.server",
     "jamly.service", "demucs.htdemucs", "demucs.hf", "yt_dlp.__main__",
 ]
 hidden += collect_submodules("yt_dlp_ejs")

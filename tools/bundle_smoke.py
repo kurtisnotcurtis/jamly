@@ -193,13 +193,13 @@ def main() -> int:
                 del environment[key]
         state = root / "state"
         output = root / "output"
-        command = [str(executable), "--no-browser", "--state-dir", str(state), "--port", "0",
+        command = [str(executable), "companion", "--no-browser", "--state-dir", str(state), "--port", "0",
                    "--output-dir", str(output)]
         url = token = None
         media_server = None
         media_thread = None
         try:
-            doctor = subprocess.run([str(executable), "--doctor"], cwd=root, env=environment,
+            doctor = subprocess.run([str(executable), "doctor"], cwd=root, env=environment,
                                     check=True, capture_output=True, text=True, timeout=120)
             print(doctor.stdout, end="")
             launcher = executable.with_name("Jamly.exe" if os.name == "nt" else "Jamly")

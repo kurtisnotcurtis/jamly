@@ -114,16 +114,17 @@ Saved UI preferences are validated and atomically persisted separately from the 
 installation configuration; explicit backend CLI arguments override saved preferences at startup.
 An accepted job retains its original settings even if the defaults change.
 
-A private per-user token (at least 32 non-whitespace ASCII characters, supplied via `server-token`,
-`JAMLY_SERVER_TOKEN`, or `--server-token-file`) or a 24-hour companion session is required for jobs,
-status and stem playback. The unauthenticated health probe contains no paths or credentials. Origin
-and Host checks are independent of authentication; extension origins are rejected unless explicitly
-authorized via `--allow-origin` or the companion's extension setup. Result URLs (`/outputs/...` and
-`/source/...`) refer only to known completed artifacts (or verified retained source audio strictly
-inside the export directory or matching the job's own local source), never arbitrary client-supplied
-filesystem paths or proxied remote URLs. Local file uploads stored in private state are tracked in an
-explicit ledger (`uploads-ledger.json`); startup pruning and list removal delete only files Jamly
-created, and `--queue` never infers `--state-dir`.
+The backend binds strictly to loopback addresses (`127.0.0.1`, `localhost`, or `::1`) and refuses
+non-loopback binds. A private per-user token (at least 32 non-whitespace ASCII characters, supplied
+via `server-token`, `JAMLY_SERVER_TOKEN`, or `--server-token-file`) or a 24-hour companion session
+is required for jobs, status and stem playback. The unauthenticated health probe contains no paths
+or credentials. Origin and Host checks are independent of authentication; extension origins are
+rejected unless explicitly authorized via `--allow-origin` or the companion's extension setup. Result
+URLs (`/outputs/...` and `/source/...`) refer only to known completed artifacts (or verified retained
+source audio strictly inside the export directory or matching the job's own local source), never
+arbitrary client-supplied filesystem paths or proxied remote URLs. Local file uploads stored in
+private state are tracked in an explicit ledger (`uploads-ledger.json`); startup pruning and list
+removal delete only files Jamly created, and `--queue` never infers `--state-dir`.
 
 Automatic pairing delivers a two-minute, single-use launch ticket in a private local HTML file.
 The browser submits it in a POST body, receives a 24-hour session token, and stores that token in
@@ -138,7 +139,7 @@ For playback it fetches the selected stem with the session token in an Authoriza
 it from an in-memory `blob:` URL (the CSP allows `media-src 'self' blob:`), so a long float32 WAV is
 held in memory while loaded. UI pages use a same-origin referrer policy, a restrictive CSP, and frame
 blocking. Only the ticket-exchange endpoint permits a null file-origin; other browser origins remain
-restricted. Desktop actions are limited to loopback servers.
+restricted.
 
 The extension and optional userscript verify the backend via the `/handshake` HMAC challenge before
 attaching the pairing token, so a stand-in listener on the port cannot harvest credentials. The
@@ -148,8 +149,10 @@ userscript is a limited status/enqueue helper, not a second full application.
 
 ## Installed environment
 
-Companion, CLI, backend, doctor and service commands share configuration helpers. Defaults use per-user
-application data and `~/Music/jamly`, not whichever directory launched the service.
+A single `jamly` CLI (`jamly.cli`) dispatches subcommands (`companion` by default, `split`, `server`,
+`doctor`, and `service`) identically across PyPI installs and desktop bundles, sharing configuration
+helpers. Defaults use per-user application data and `~/Music/jamly`, not whichever directory launched
+the service.
 
 `service` renders OS-specific registration definitions around the exact installed Python executable.
 Windows uses a per-user logon task, macOS a LaunchAgent, and Linux a user systemd unit. Browser assets
@@ -182,7 +185,7 @@ checksum-verified python-build-standalone release. Native dependencies and Deno 
 and all state/exports stay outside the application. Model weights download into their upstream user
 caches on first use and are not included in the application. Updates replace the application manually.
 
-The packaging workflow builds native archives on macOS ARM64/Intel, Windows x64, and Linux x64.
+The packaging workflow builds native archives on macOS ARM64, Windows x64, and Linux x64.
 Linux builds target Ubuntu 22.04's glibc baseline. The package check extracts into a new path containing
 spaces, clears PATH and Python environment overrides, checks runtime/assets/pairing, and processes
 generated compressed audio with both real model presets. macOS binaries are also checked for external
@@ -206,7 +209,7 @@ suites, commit on `main`, and push an annotated `vX.Y.Z` tag. Tag pushes trigger
 which gates release creation on the full CI test suite (`ci.yml`), verifies the tag against
 `tools/version.py`, compiles native audio tools fresh from their checksum-pinned sources without
 restoring build caches, installs the SHA-256-pinned Linux CPU-only PyTorch wheel
-(`tools/linux-cpu-torch.json`), smoke-tests the four desktop companion archives alongside a single
+(`tools/linux-cpu-torch.json`), smoke-tests the three desktop companion archives alongside a single
 shared native source archive, renders release manifests for WinGet, AUR (`jamly-bin`), and the
 Homebrew Tap, packages the browser extension and userscript, writes `SHA256SUMS.txt`, and publishes
 the GitHub Release (refusing to clobber an existing release); configured repository secrets then push

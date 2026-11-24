@@ -25,7 +25,7 @@ Split any song or video into isolated **drums** and **drumless** practice tracks
 
 ### Option A: Desktop Companion (No Python setup required)
 
-Self-contained archives for **macOS** (Apple Silicon & Intel), **Windows x64**, and **Linux x64** bundle Python, Demucs, `yt-dlp`, Deno, `ffmpeg`, and `ffprobe` out of the box.
+Self-contained archives for **macOS** (Apple Silicon), **Windows x64**, and **Linux x64** bundle Python, Demucs, `yt-dlp`, Deno, `ffmpeg`, and `ffprobe` out of the box.
 
 1. Download the archive for your OS from [Releases](https://github.com/kurtisnotcurtis/jamly/releases) (or the **Companion packages** GitHub Actions workflow).
 2. Launch the companion:
@@ -56,20 +56,20 @@ Then install Jamly and verify your environment:
 
 ```sh
 uv tool install --python 3.12 jamly-audio-sep
-jamly-doctor
+jamly doctor
 ```
 
 From there, you can launch the local web companion or split tracks directly from your terminal:
 
 ```sh
-# Open the local web companion UI
-jamly-companion
+# Open the local web companion UI (default command)
+jamly
 
 # Or split directly from the CLI
-jamly -i "https://youtu.be/VIDEO_ID"
-jamly -i "https://youtu.be/VIDEO_ID" --stem vocals
-jamly -i "/path/to/song.flac" --model htdemucs_ft --audio-format wav
-jamly -i "/path/to/song.flac" --model htdemucs_6s --stem guitar
+jamly split "https://youtu.be/VIDEO_ID"
+jamly split "https://youtu.be/VIDEO_ID" --stem vocals
+jamly split "/path/to/song.flac" --model htdemucs_ft --audio-format wav
+jamly split "/path/to/song.flac" --model htdemucs_6s --stem guitar
 ```
 
 ---
@@ -109,13 +109,13 @@ The companion works out of the box by pasting URLs or picking local files, but y
 
 1. In the companion UI, expand **Optional Chrome / Edge extension** and click **Prepare extension**.
 2. Open `chrome://extensions` (or `edge://extensions`), enable **Developer mode**, click **Load unpacked**, and select the displayed folder.
-3. Open the extension's **Pair / settings** page, copy its extension origin (`chrome-extension://...`), and authorize it in the companion UI (or pass `--allow-origin` to `jamly-server`).
-4. Paste the backend URL (`http://127.0.0.1:8765`) and your pairing token (from the displayed `jamly-service token` command, or `server-token` in your state directory) into the extension's **Pair / settings** page.
+3. Open the extension's **Pair / settings** page, copy its extension origin (`chrome-extension://...`), and authorize it in the companion UI (or pass `--allow-origin` to `jamly server`).
+4. Paste the backend URL (`http://127.0.0.1:8765`) and your pairing token (from the displayed `jamly service token` command, or `server-token` in your state directory) into the extension's **Pair / settings** page.
 5. Click the Jamly toolbar icon on a YouTube video and select **Use current page** → **Split drums**.
 
-**CLI-only setup**: Run `jamly-server`, then run `jamly-service browser` (prints the unpacked extension folder) and `jamly-service token` (prints the pairing token).
+**CLI-only setup**: Run `jamly server`, then run `jamly service browser` (prints the unpacked extension folder) and `jamly service token` (prints the pairing token).
 
-**Optional Userscript**: Run `jamly-service userscript` to export a lightweight YouTube / YouTube Music button for Tampermonkey or Violentmonkey. Use its **Pair Jamly** menu command to set your token.
+**Optional Userscript**: Run `jamly service userscript` to export a lightweight YouTube / YouTube Music button for Tampermonkey or Violentmonkey. Use its **Pair Jamly** menu command to set your token.
 
 </details>
 
@@ -125,17 +125,17 @@ The companion works out of the box by pasting URLs or picking local files, but y
 <br>
 
 ```sh
-jamly -i "https://youtu.be/VIDEO_ID"
-jamly -i "/path/to/local_song.wav"
-jamly -i URL -i ANOTHER_URL --audio-format wav
-jamly -i URL --model htdemucs_ft
-jamly -i URL --model htdemucs_6s
-jamly -i URL --replace-existing
+jamly split "https://youtu.be/VIDEO_ID"
+jamly split "/path/to/local_song.wav"
+jamly split URL ANOTHER_URL --audio-format wav
+jamly split URL --model htdemucs_ft
+jamly split URL --model htdemucs_6s
+jamly split URL --replace-existing
 ```
 
 - **Piped inputs**: Newline-separated URLs, IDs, or file paths can be piped via `stdin`. For a bare ID starting with `-`, pass `-i=-VIDEO_ID`.
 - **Single-recording policy**: Playlists, search results, multi-item pages, and live/upcoming streams are rejected; pass individual recordings. Cookie/account login is not used.
-- **Resume & retry**: Running `jamly` with no `-i` arguments processes any pending items and retries failed CLI jobs once.
+- **Resume & retry**: Running `jamly split` with no inputs processes any pending items and retries failed CLI jobs once.
 - **Smart cache**: Checksum-valid exports are reused without re-downloading or re-separating unless `--replace-existing` is passed.
 
 | Option | Default | Description |
@@ -159,17 +159,17 @@ jamly -i URL --replace-existing
 ### Start a CLI installation automatically at login
 
 ```sh
-jamly-service install
-jamly-service status
-jamly-service restart
-jamly-service stop
-jamly-service uninstall
+jamly service install
+jamly service status
+jamly service restart
+jamly service stop
+jamly service uninstall
 ```
 
-`jamly-service install` registers a per-user `systemd` unit on Linux, a `LaunchAgent` on macOS, or a user logon task on Windows using absolute paths and your detected `ffmpeg` location. Pass `--dry-run` to preview the generated service definition, or pass pipeline defaults during install:
+`jamly service install` registers a per-user `systemd` unit on Linux, a `LaunchAgent` on macOS, or a user logon task on Windows using absolute paths and your detected `ffmpeg` location. Pass `--dry-run` to preview the generated service definition, or pass pipeline defaults during install:
 
 ```sh
-jamly-service install --audio-format wav --output-dir "/path/to/music" --port 8765
+jamly service install --audio-format wav --output-dir "/path/to/music" --port 8765
 ```
 
 ### Updating Jamly
@@ -178,9 +178,9 @@ jamly-service install --audio-format wav --output-dir "/path/to/music" --port 87
 - **CLI install**:
   ```sh
   uv tool upgrade jamly-audio-sep
-  jamly-doctor
-  jamly-service browser
-  jamly-service restart
+  jamly doctor
+  jamly service browser
+  jamly service restart
   ```
   Reload the unpacked browser extension in `chrome://extensions` after exporting updated assets.
 
@@ -221,7 +221,7 @@ uv sync --locked
 python tools/dev-check.py            # run the whole CI suite locally before pushing
 ```
 
-`tools/dev-check.py` is the single runner used both locally and in `.github/workflows/ci.yml` (lockstep version check, `jamly-doctor`, pytest, ruff, Node extension tests, and a fresh-install wheel smoke) and fails fast on the first broken stage. Opt into the browser E2E or real-model checks:
+`tools/dev-check.py` is the single runner used both locally and in `.github/workflows/ci.yml` (lockstep version check, `jamly doctor`, pytest, ruff, Node extension tests, and a fresh-install wheel smoke) and fails fast on the first broken stage. Opt into the browser E2E or real-model checks:
 
 ```sh
 npm ci --prefix tests/e2e                   # one-time install for Playwright E2E tests
