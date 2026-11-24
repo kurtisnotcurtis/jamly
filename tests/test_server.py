@@ -661,7 +661,7 @@ class ServerTests(unittest.TestCase):
             ])
             app = server.ItemServer(args)
             try:
-                self.assertEqual(app.state_dir, (Path(root) / "isolated-state").resolve())
+                self.assertEqual(app.state_dir.resolve(), (Path(root) / "isolated-state").resolve())
                 self.assertTrue(avatar.is_file())
             finally:
                 app.stop()

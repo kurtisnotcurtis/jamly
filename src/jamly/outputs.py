@@ -60,7 +60,7 @@ def resolve_manifest_original(directory: Path, manifest: dict) -> Path | None:
         return None
     if resolved.parent != audio_root:
         return None
-    return resolved
+    return audio_directory(directory) / resolved.name
 
 
 def read_manifest_structural(directory: Path) -> dict:
