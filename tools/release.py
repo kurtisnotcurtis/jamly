@@ -87,10 +87,11 @@ def _release_section(text: str, version_str: str) -> str:
         carried.pop(0)
 
     dated_line = "## [%s] - %s\n" % (version_str, date)
-    new_lines = [header, dated_line, "\n"]
+    new_lines = [header, "## [Unreleased]\n\n%s\n\n" % PLACEHOLDER, dated_line, "\n"]
     if carried:
+        while carried and carried[-1].strip() == "":
+            carried.pop()
         new_lines += carried + ["\n"]
-    new_lines += ["## [Unreleased]\n\n%s\n" % PLACEHOLDER, "\n"]
     new_lines += lines[end:]
     return "".join(new_lines)
 

@@ -152,6 +152,13 @@ class MultiHostExtractionTests(unittest.TestCase):
             self.assertEqual(Path(from_path.source_url), audio.resolve())
             self.assertEqual(local_audio_path(from_path.source_url), audio.resolve())
 
+    def test_file_uri_is_percent_decoded_only_once(self):
+        with tempfile.TemporaryDirectory() as root:
+            audio = Path(root) / "100%20pure.wav"
+            audio.write_bytes(b"RIFF")
+            parsed = make_input(audio.as_uri())
+            self.assertEqual(Path(parsed.source_url), audio.resolve())
+
     def test_remote_file_uri_is_rejected(self):
         with self.assertRaises(InputError):
             make_input("file://evil.example/share/song.wav")

@@ -22,7 +22,7 @@ class QueueError(RuntimeError):
 
 @contextmanager
 def queue_owner(path: str):
-    Path(path).absolute().parent.mkdir(parents=True, exist_ok=True)
+    Path(path).absolute().parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock = FileLock(str(Path(path).absolute()) + ".owner.lock")
     try:
         lock.acquire(timeout=0)
@@ -240,6 +240,18 @@ class WatchQueue:
     ) -> bool:
         if not is_valid_stable_id(watch_id):
             raise ValueError("invalid stable id")
+        if source_url is not None and not isinstance(source_url, str):
+            raise ValueError("source_url must be a string")
+        if original_path is not None and not isinstance(original_path, str):
+            raise ValueError("original_path must be a string")
+        if title is not None and not isinstance(title, str):
+            raise ValueError("title must be a string")
+        if not isinstance(generation, str) or not generation:
+            raise ValueError("generation must be a non-empty string")
+        if not isinstance(outputs, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in outputs.items()
+        ):
+            raise ValueError("outputs must be a string mapping")
         export_key = self._export_key(model, stem, audio_format)
         export_entry = {
             "model": model, "stem": stem, "audio_format": audio_format,
@@ -360,7 +372,7 @@ class WatchQueue:
         if not self.path:
             return
         path = Path(self.path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with self._save_lock, FileLock(self.path + ".write.lock", timeout=5):
             try:
                 current = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
@@ -374,7 +386,8 @@ class WatchQueue:
             data = {"revision": next_revision, "updated_at": time.time(), "items": self._items}
             temporary = path.with_name(path.name + ".tmp-" + uuid.uuid4().hex)
             try:
-                with temporary.open("w", encoding="utf-8") as file:
+                fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as file:
                     json.dump(data, file, ensure_ascii=False, indent=2)
                     file.flush()
                     os.fsync(file.fileno())

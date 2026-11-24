@@ -82,13 +82,20 @@
           <p>In Chrome / Edge's extensions page, enable Developer mode, choose <strong>Load unpacked</strong>,
             and select this folder:</p>
           <code id="extension-path"></code>
-          <p>Open the extension's <strong>Pair / settings</strong> page. Use this backend URL and token:</p>
+          <p>Open the extension's <strong>Pair / settings</strong> page, copy its origin, and authorize it below:</p>
+          <div class="folder">
+            <input id="extension-origin" type="text" placeholder="chrome-extension://..." spellcheck="false" autocomplete="off">
+            <button id="allow-extension-origin" type="button">Allow origin</button>
+          </div>
+          <p id="extension-origins" class="hint"></p>
+          <p>Then enter this backend URL in the extension:</p>
           <code id="extension-url"></code>
-          <label for="extension-token">Private pairing token</label>
-          <input id="extension-token" type="password" readonly autocomplete="off">
-          <button id="copy-token" type="button">Copy token</button>
-          <p class="hint">Keep the token private. After updating Jamly, prepare the extension again and reload it
-            in the browser's extensions page. No marketplace listing is provided yet.</p>
+          <p>Retrieve your private pairing token locally by running:</p>
+          <code id="extension-token-cmd"></code>
+          <button id="copy-token-cmd" type="button">Copy command</button>
+          <p class="hint">For security, the master pairing token is never returned over HTTP to browser sessions
+            (desktop bundle users can also read <code>server-token</code> inside the Jamly state directory).
+            After updating Jamly, prepare the extension again and reload it in the browser's extensions page.</p>
         </div>
       </details>
       <div class="exports-header">

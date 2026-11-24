@@ -64,28 +64,29 @@ def download_source(name: str, cache: Path) -> Path:
             raise RuntimeError("Cached source checksum mismatch: " + str(archive))
         return archive
     temporary = archive.with_suffix(archive.suffix + ".partial")
-    for attempt in range(3):
-        candidate_url = info["url"]
-        if attempt > 0 and "//downloads.sourceforge.net/project/" in candidate_url:
-            candidate_url = (
-                candidate_url.replace(
-                    "//downloads.sourceforge.net/project/",
-                    "//master.dl.sourceforge.net/project/",
-                )
-                + "?viasf=1"
-            )
-        try:
-            with urlopen(candidate_url, timeout=120) as response, temporary.open("wb") as file:
-                if urlsplit(response.url).scheme != "https":
-                    raise RuntimeError("Refusing an insecure source download")
-                shutil.copyfileobj(response, file)
-            break
-        except (URLError, TimeoutError, ConnectionError) as err:
-            # Retry on transient network errors: timeouts, connection refusals/resets, and 5xx mirror errors.
-            if not (attempt + 1 < 3 and _is_transient_network_error(err)):
-                raise
-            time.sleep(2 ** attempt)
     try:
+        for attempt in range(3):
+            candidate_url = info["url"]
+            if attempt > 0 and "//downloads.sourceforge.net/project/" in candidate_url:
+                candidate_url = (
+                    candidate_url.replace(
+                        "//downloads.sourceforge.net/project/",
+                        "//master.dl.sourceforge.net/project/",
+                    )
+                    + "?viasf=1"
+                )
+            try:
+                with urlopen(candidate_url, timeout=120) as response:
+                    if urlsplit(response.url).scheme != "https":
+                        raise RuntimeError("Refusing an insecure source download")
+                    with temporary.open("wb") as file:
+                        shutil.copyfileobj(response, file)
+                break
+            except (URLError, TimeoutError, ConnectionError) as err:
+                # Retry on transient network errors: timeouts, connection refusals/resets, and 5xx mirror errors.
+                if not (attempt + 1 < 3 and _is_transient_network_error(err)):
+                    raise
+                time.sleep(2 ** attempt)
         if checksum(temporary) != info["sha256"]:
             raise RuntimeError("Source checksum mismatch: " + info["url"])
         temporary.replace(archive)
@@ -94,7 +95,7 @@ def download_source(name: str, cache: Path) -> Path:
     return archive
 
 
-def build(work: Path, jobs: int = 4) -> Path:
+def build(work: Path, jobs: int = 4, *, rebuild: bool = False) -> Path:
     work = work.resolve()
     marker = work / ".jamly-native-build"
     if work.exists() and any(work.iterdir()) and not marker.exists():
@@ -119,7 +120,7 @@ def build(work: Path, jobs: int = 4) -> Path:
     executables = [prefix / "bin" / (name + suffix) for name in ("ffmpeg", "ffprobe")]
     binaries = executables + [sndfile_library(prefix)]
     stamp = work / "built.json"
-    if stamp.exists():
+    if not rebuild and stamp.exists():
         saved = json.loads(stamp.read_text())
         if (saved.get("inputs") == identity and all(path.is_file() for path in binaries)
                 and saved.get("binaries") == {path.name: checksum(path) for path in binaries}):

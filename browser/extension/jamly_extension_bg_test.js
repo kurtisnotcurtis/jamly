@@ -48,14 +48,30 @@ test("failed requests remain failed across the runtime message boundary", async 
   assert.equal(response.error, "authorization required");
 });
 
-test("downloads carry the pairing token as a header, never in the URL", async () => {
+test("downloads verify backend identity and carry the pairing token as a header, never in the URL", async () => {
+  let verified = 0;
   const background = worker({
+    async verifyBackend() { verified += 1; },
     outputURL(_config, url) { return "http://127.0.0.1:8765" + url; },
   }, { jamly_serverToken: "paired" });
   const response = await background.send({
     type: "download", output: { url: "/outputs/id/drums?generation=one", name: "drums.wav" },
   });
   assert.equal(response.ok, true);
+  assert.equal(verified, 1);
   assert.equal(background.downloads[0].headers[0].value, "Bearer paired");
   assert.equal(background.downloads[0].url.includes("paired"), false);
+});
+
+test("downloads abort before sending credentials when backend handshake fails", async () => {
+  const background = worker({
+    async verifyBackend() { throw new Error("backend identity mismatch"); },
+    outputURL(_config, url) { return "http://127.0.0.1:8765" + url; },
+  }, { jamly_serverToken: "paired" });
+  const response = await background.send({
+    type: "download", output: { url: "/outputs/id/drums?generation=one", name: "drums.wav" },
+  });
+  assert.equal(response.ok, false);
+  assert.match(response.error, /identity/);
+  assert.equal(background.downloads.length, 0);
 });

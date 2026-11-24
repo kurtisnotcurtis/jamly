@@ -1,7 +1,11 @@
 (function () {
   "use strict";
   const byId = id => document.getElementById(id);
-  const config = { url: location.origin, token: sessionStorage.getItem("jamly-token") || "" };
+  const config = {
+    url: location.origin,
+    token: sessionStorage.getItem("jamly-token") || "",
+    verifyBackend: false,
+  };
   let models = [];
   let stems = [];
   let initialized = false;
@@ -937,16 +941,30 @@
       ? `Cleared ${result.removed} item(s) from the list. Audio files remain in your output folder.`
       : "No finished or failed items to clear.";
   }));
-  byId("prepare-extension").addEventListener("click", () => action(byId("prepare-extension"), async () => {
-    const extension = await post("/app/extension");
+  function renderExtensionSetup(extension) {
     byId("extension-path").textContent = extension.directory;
     byId("extension-url").textContent = location.origin;
-    byId("extension-token").value = extension.token;
+    byId("extension-token-cmd").textContent = extension.token_command || "jamly-service token";
+    const allowed = Array.isArray(extension.allowed_origins) ? extension.allowed_origins : [];
+    byId("extension-origins").textContent = allowed.length
+      ? "Authorized extension origins: " + allowed.join(", ")
+      : "No extension origins authorized yet.";
     byId("extension-setup").hidden = false;
+  }
+
+  byId("prepare-extension").addEventListener("click", () => action(byId("prepare-extension"), async () => {
+    renderExtensionSetup(await post("/app/extension"));
   }));
-  byId("copy-token").addEventListener("click", () => action(byId("copy-token"), async () => {
-    await navigator.clipboard.writeText(byId("extension-token").value);
-    byId("connection").textContent = "Pairing token copied. Keep it private.";
+  byId("allow-extension-origin")?.addEventListener("click", () => action(byId("allow-extension-origin"), async () => {
+    const origin = byId("extension-origin").value.trim();
+    if (!origin) throw new Error("Enter the extension origin shown on its Pair / settings page.");
+    renderExtensionSetup(await post("/app/extension", { allow_origin: origin }));
+    byId("extension-origin").value = "";
+    byId("connection").textContent = "Extension origin authorized.";
+  }));
+  byId("copy-token-cmd")?.addEventListener("click", () => action(byId("copy-token-cmd"), async () => {
+    await navigator.clipboard.writeText(byId("extension-token-cmd").textContent);
+    byId("connection").textContent = "Token command copied.";
   }));
   byId("quit").addEventListener("click", () => action(byId("quit"), async () => {
     if (!window.confirm("Stop the companion? Unfinished jobs will resume the next time you open Jamly.")) return;

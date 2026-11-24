@@ -21,7 +21,7 @@ def main() -> int:
     settings, _rest = preliminary.parse_known_args()
     state, _queue = runtime_paths(settings)
     if sys.stdout is None or sys.stderr is None:
-        state.mkdir(parents=True, exist_ok=True)
+        state.mkdir(parents=True, exist_ok=True, mode=0o700)
         log = os.fdopen(os.open(state / "launcher.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600),
                         "a", encoding="utf-8", buffering=1)
         sys.stdout = sys.stdout or log

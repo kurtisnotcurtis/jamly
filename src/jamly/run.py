@@ -19,7 +19,7 @@ from .audio import render_pair
 from .bootstrap import detect_ffmpeg, ytdlp_command, ytdlp_options
 from .config import add_pipeline_arguments, job_arguments, pipeline_options, runtime_paths
 from .core import (
-    build_ytdlp_extract_cmd, check_cancelled, command_prefix, detect_engine,
+    MAX_MEDIA_BYTES, build_ytdlp_extract_cmd, check_cancelled, command_prefix, detect_engine,
     run as _run, sanitize_filename, separate_stems,
 )
 from .logging import Logger
@@ -31,12 +31,14 @@ from .naming import meta_dict, parse_title_artist, stem_prefix
 from .normalize import Input, is_valid_stable_id, local_audio_path, normalize_inputs_full
 from .outputs import (
     PROCESSING_VERSION, audio_directory, checksum, publish_directory, read_manifest_structural,
-    recover_directory, resolve_output_path,
+    recover_directory, resolve_manifest_original, resolve_output_path,
 )
 from .watch_queue import QueueError, WatchQueue, queue_owner
 
 _log = Logger()
 METADATA_FETCH_TIMEOUT = 60
+DOWNLOAD_TIMEOUT = 15 * 60
+MAX_DURATION_SECONDS = 3600
 OUTPUT_LOCK_TIMEOUT = 10.0
 
 
@@ -95,8 +97,15 @@ def _fetch_item_metadata(ytdlp_exe, source_url: str, cancel_event=None) -> dict:
     if data.get("is_live") or data.get("is_upcoming"):
         raise ValueError("Live or upcoming media is not supported; use a completed recording")
     duration = data.get("duration")
-    if duration is not None and (isinstance(duration, bool) or not isinstance(duration, (int, float))):
-        raise ValueError("Invalid media duration")
+    if duration is not None:
+        if isinstance(duration, bool) or not isinstance(duration, (int, float)) or duration < 0:
+            raise ValueError("Invalid media duration")
+        if duration > MAX_DURATION_SECONDS:
+            raise ValueError("Media exceeds the %d-minute maximum duration" % (MAX_DURATION_SECONDS // 60))
+    for size_key in ("filesize", "filesize_approx"):
+        size_val = data.get(size_key)
+        if isinstance(size_val, (int, float)) and not isinstance(size_val, bool) and size_val > MAX_MEDIA_BYTES:
+            raise ValueError("Media exceeds the %d MB maximum size" % (MAX_MEDIA_BYTES // (1024 * 1024)))
     return {
         "id": data.get("id"), "title": data.get("title"),
         "artist": data.get("artist") or data.get("creator"),
@@ -158,26 +167,38 @@ def _fetch_local_metadata(ffprobe_exe: str, path: Path, cancel_event=None) -> di
     check_cancelled(cancel_event)
     if not path.exists() or not path.is_file():
         raise ValueError("Local audio file not found: %s" % path)
-    if path.stat().st_size == 0:
+    file_size = path.stat().st_size
+    if file_size == 0:
         raise ValueError("Local audio file is empty: %s" % path)
-    if Path(ffprobe_exe).is_file():
-        return _probe_ffprobe(ffprobe_exe, path, cancel_event)
-    return _probe_soundfile(path)
+    if file_size > MAX_MEDIA_BYTES:
+        raise ValueError("Local audio file exceeds the %d MB maximum size" % (MAX_MEDIA_BYTES // (1024 * 1024)))
+    metadata = (
+        _probe_ffprobe(ffprobe_exe, path, cancel_event)
+        if Path(ffprobe_exe).is_file()
+        else _probe_soundfile(path)
+    )
+    duration = metadata.get("duration_seconds")
+    if duration is not None and duration > MAX_DURATION_SECONDS:
+        raise ValueError("Local audio file exceeds the %d-minute maximum duration" % (MAX_DURATION_SECONDS // 60))
+    return metadata
 
 
-def download_audio(command: list[str], workdir: Path, cancel_event=None) -> Path:
+def download_audio(command: list[str], workdir: Path, cancel_event=None, *,
+                   timeout: float | None = DOWNLOAD_TIMEOUT) -> Path:
     outputs = []
 
     def on_line(line):
         if line.startswith("JAMLY_FILE:"):
             outputs.append(Path(json.loads(line.removeprefix("JAMLY_FILE:"))).resolve())
 
-    result = _run(command, stream=True, on_line=on_line, cancel_event=cancel_event)
+    result = _run(command, stream=True, on_line=on_line, cancel_event=cancel_event, timeout=timeout)
     # yt-dlp's single-download limit may terminate with 101 after a successful transfer.
     if result.returncode not in (0, 101):
         raise RuntimeError("Audio download failed: %s" % result.stderr.strip())
     if len(outputs) != 1 or outputs[0].parent != workdir.resolve() or not outputs[0].is_file():
         raise RuntimeError("Expected exactly one downloaded audio file")
+    if outputs[0].stat().st_size > MAX_MEDIA_BYTES:
+        raise ValueError("Downloaded audio exceeds the %d MB maximum size" % (MAX_MEDIA_BYTES // (1024 * 1024)))
     return outputs[0]
 
 
@@ -207,15 +228,17 @@ def stem_destination_paths(output_dir: str, watch_id: str, fmt: str, parsed=None
 
 
 def _resolve_manifest_original(directory: Path, manifest: dict) -> str | None:
-    recorded = manifest.get("original")
-    if not isinstance(recorded, str) or not recorded.strip():
-        return None
-    candidate = Path(recorded)
-    if not candidate.is_absolute():
-        candidate = audio_directory(directory) / recorded
-    if candidate.is_file() and not candidate.is_symlink():
-        return str(candidate)
-    return None
+    resolved = resolve_manifest_original(directory, manifest)
+    return str(resolved) if resolved is not None else None
+
+
+def _local_source_fingerprint(path: Path) -> dict:
+    stat = path.stat()
+    return {
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "sha256": checksum(path),
+    }
 
 
 def result_from_manifest(wid: str, directory: Path, manifest: dict, status: str, *,
@@ -234,13 +257,13 @@ def result_from_manifest(wid: str, directory: Path, manifest: dict, status: str,
 
 
 def _existing_output(wid: str, directory: Path, *, model: str, stem: str,
-                     audio_format: str) -> dict | None:
+                     audio_format: str, local_source: Path | None = None) -> dict | None:
     """Return the manifest of an identical track that can be skipped, or None to regenerate.
 
     A matching identity whose stems are all present and hash-valid is safe to skip. When the same
-    track's audio was deleted (a missing output), None lets the caller reprocess without requiring
-    --replace-existing, since there is no distinct artifact being overwritten. Structurally invalid
-    or differently-identified outputs still raise so the caller can ask for --replace-existing.
+    track's audio was deleted (a missing output) or a local source file changed in place, None lets
+    the caller reprocess without requiring --replace-existing. Structurally invalid or
+    differently-identified outputs still raise so the caller can ask for --replace-existing.
     """
     try:
         manifest = read_manifest_structural(directory)
@@ -250,6 +273,15 @@ def _existing_output(wid: str, directory: Path, *, model: str, stem: str,
             and manifest.get("model") == model and manifest.get("stem", DEFAULT_STEM) == stem):
         raise ValueError(
             "Incomplete or outdated outputs; use --replace-existing: output identity does not match")
+    if local_source is not None:
+        if not local_source.is_file() or local_source.is_symlink():
+            return None
+        recorded_source = manifest.get("source")
+        if not isinstance(recorded_source, dict) or not isinstance(recorded_source.get("sha256"), str):
+            return None
+        stat = local_source.stat()
+        if recorded_source.get("size") != stat.st_size or checksum(local_source) != recorded_source["sha256"]:
+            return None
     for record in manifest["outputs"].values():
         path = resolve_output_path(directory, record["file"])
         if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
@@ -329,7 +361,8 @@ def _resolve_tools(args) -> tuple[str, str, str]:
 
 def _write_manifest(meta_path: Path, *, wid: str, source: str, metadata: dict, parsed,
                     model: str, stem: str, audio_format: str, audio_info: dict,
-                    destinations: dict[str, Path], orig_target: Path | None) -> dict:
+                    destinations: dict[str, Path], orig_target: Path | None,
+                    source_fingerprint: dict | None = None) -> dict:
     manifest = dict(
         meta_dict(watch_id=wid, source_url=source, title=metadata.get("title"),
                   artist=metadata.get("artist") or (parsed[0] if parsed else None),
@@ -341,6 +374,8 @@ def _write_manifest(meta_path: Path, *, wid: str, source: str, metadata: dict, p
     )
     if orig_target is not None:
         manifest["original"] = orig_target.name
+    if source_fingerprint is not None:
+        manifest["source"] = source_fingerprint
     with meta_path.open("w", encoding="utf-8") as file:
         json.dump(manifest, file, ensure_ascii=False, indent=2)
         file.flush()
@@ -371,6 +406,7 @@ def _stage_and_publish(wid: str, args, *, source: str, local_source: Path | None
     ) as staged:
         workdir, staged_dir = Path(work), Path(staged)
         stage("download")
+        source_fingerprint = _local_source_fingerprint(local_source) if local_source is not None else None
         audio = (
             local_source if local_source is not None else download_audio(
                 build_download_cmd(command, wid, work, source, ffmpeg_dir), workdir, cancel_event
@@ -400,6 +436,7 @@ def _stage_and_publish(wid: str, args, *, source: str, local_source: Path | None
             Path(meta), wid=wid, source=source, metadata=metadata, parsed=parsed,
             model=model, stem=stem, audio_format=args.audio_format, audio_info=audio_info,
             destinations=destinations, orig_target=orig_target,
+            source_fingerprint=source_fingerprint,
         )
         stage("publish")
         with _output_lock(directory, cancel_event):
@@ -432,7 +469,8 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
             recover_directory(directory)
             if directory.exists() and not args.replace_existing:
                 manifest = _existing_output(wid, directory, model=model, stem=stem,
-                                            audio_format=args.audio_format)
+                                            audio_format=args.audio_format,
+                                            local_source=local_source)
                 if manifest is not None:
                     return result_from_manifest(wid, directory, manifest, "skipped",
                                                 local_source=local_source)
@@ -458,13 +496,15 @@ def process_one(wid: str, args, progress=None, source_url=None, cancel_event=Non
 
 
 def gather_inputs(args) -> list[Input]:
-    sources = list(args.input or [])
-    if not sys.stdin.isatty():
+    raw_inputs = list(args.input or [])
+    explicit_stdin = "-" in raw_inputs
+    sources = [item for item in raw_inputs if item != "-"]
+    if explicit_stdin or (not sources and not sys.stdin.isatty()):
         try:
             sources.extend(sys.stdin.read().splitlines())
         except (ValueError, OSError):
             # Test runners and some GUI launchers supply an unreadable stdin.
-            if not sources:
+            if explicit_stdin or not sources:
                 raise ValueError("Cannot read stdin; pass inputs with -i")
     return normalize_inputs_full(sources)
 

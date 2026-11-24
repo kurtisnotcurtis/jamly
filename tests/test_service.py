@@ -28,13 +28,16 @@ class ServiceDefinitionsTests(unittest.TestCase):
             path, unit = service.render_service("linux", python, settings, state, home=Path("/home"))
         self.assertIn('ExecStart="/installed path/python" "-m" "jamly.server"', unit.decode())
         self.assertIn("KillMode=mixed", unit.decode())
+        self.assertIn("RestartPreventExitStatus=2", unit.decode())
         self.assertIn(str(settings), unit.decode())
         self.assertNotIn("PYTHONPATH", unit.decode())
         self.assertEqual(path.name, "jamly.service")
 
         _, plist = service.render_service("darwin", python, settings, state, home=Path("/home"))
-        self.assertEqual(plistlib.loads(plist)["ProgramArguments"],
+        parsed_plist = plistlib.loads(plist)
+        self.assertEqual(parsed_plist["ProgramArguments"],
                          [python, "-m", "jamly.server", "--config", str(settings)])
+        self.assertEqual(parsed_plist["KeepAlive"], {"Crashed": True})
 
         _, task = service.render_service("win32", "C:\\Jamly Env\\python.exe",
                                          Path("C:/Jamly State/server.json"), Path("C:/Jamly State"),
@@ -76,7 +79,7 @@ class SharedConfigTests(unittest.TestCase):
         ):
             queue = Path(root) / "custom.json"
             args = server.build_parser().parse_args(["--queue", str(queue)])
-            self.assertEqual(config.runtime_paths(args), (Path(root), queue))
+            self.assertEqual(config.runtime_paths(args), (config.state_directory(), queue))
             args.state_dir = str(Path(root) / "separate-state")
             self.assertEqual(config.runtime_paths(args), (Path(args.state_dir), queue))
             same_queue = Path(root) / "." / "custom.json"
@@ -133,3 +136,7 @@ class SharedConfigTests(unittest.TestCase):
             (state / "server-token").write_text("")
             with self.assertRaises(ValueError):
                 config.pairing_token(state)
+            with self.assertRaises(ValueError):
+                config.pairing_token(state, "x")
+            with self.assertRaises(ValueError):
+                config.pairing_token(state, "x" * (config.MIN_TOKEN_LENGTH - 1))

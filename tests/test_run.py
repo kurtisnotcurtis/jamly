@@ -47,6 +47,33 @@ class MetadataTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "network failed"):
                 run._fetch_item_metadata("yt-dlp", "https://example.test/media")
 
+    def test_duration_and_filesize_caps_reject_oversized_media(self):
+        for data in (
+            {"title": "Long", "duration": run.MAX_DURATION_SECONDS + 1},
+            {"title": "Negative", "duration": -5},
+            {"title": "Huge", "duration": 60, "filesize": run.MAX_MEDIA_BYTES + 1},
+            {"title": "HugeApprox", "duration": 60, "filesize_approx": run.MAX_MEDIA_BYTES + 1},
+        ):
+            with self.subTest(data=data), patch.object(
+                run, "_run", return_value=RunResult([], 0, json.dumps(data), "")
+            ):
+                with self.assertRaises(ValueError):
+                    run._fetch_item_metadata("yt-dlp", "https://example.test/media")
+
+    def test_download_audio_applies_download_timeout(self):
+        with tempfile.TemporaryDirectory() as root:
+            workdir = Path(root)
+            downloaded = workdir / "track.wav"
+            downloaded.write_bytes(b"RIFF")
+
+            def fake_run(_cmd, *, on_line=None, timeout=None, **_kwargs):
+                self.assertEqual(timeout, run.DOWNLOAD_TIMEOUT)
+                on_line("JAMLY_FILE:" + json.dumps(str(downloaded)))
+                return RunResult([], 0, "", "")
+
+            with patch.object(run, "_run", side_effect=fake_run):
+                self.assertEqual(run.download_audio(["yt-dlp"], workdir), downloaded.resolve())
+
 
 class PipelineTests(unittest.TestCase):
     def setUp(self):
@@ -331,6 +358,79 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result.source_path, str(local_file.resolve()))
         manifest = outputs.read_manifest(Path(result.meta_path).parent)
         self.assertEqual(manifest["uploader"], "local file")
+
+    def test_local_file_modified_in_place_regenerates_stems(self):
+        local_file = self.root / "take.wav"
+        sf.write(local_file, np.full((22050, 2), 0.1, dtype=np.float32), 44100, subtype="FLOAT")
+        inp = run.normalize_inputs_full([str(local_file)])[0]
+        first = run.process_one(inp.watch_id, self.args, source_url=inp.source_url)
+        self.assertEqual(first.status, "done", first.error)
+        cached = run.process_one(inp.watch_id, self.args, source_url=inp.source_url)
+        self.assertEqual(cached.status, "skipped")
+        # Overwrite with different audio of the exact same size and preserve mtime.
+        orig_stat = local_file.stat()
+        self.drum_level = 0.6
+        sf.write(local_file, np.full((22050, 2), 0.4, dtype=np.float32), 44100, subtype="FLOAT")
+        os.utime(local_file, ns=(orig_stat.st_atime_ns, orig_stat.st_mtime_ns))
+        updated = run.process_one(inp.watch_id, self.args, source_url=inp.source_url)
+        self.assertEqual(updated.status, "done", updated.error)
+        self.assertNotEqual(updated.generation, first.generation)
+
+    def test_output_path_containing_dot_jamly_publishes_to_output_dir(self):
+        nested_output = self.root / ".jamly" / "exports"
+        self.args.output_dir = str(nested_output)
+        result = self.process()
+        self.assertEqual(result.status, "done", result.error)
+        self.assertEqual(Path(result.outputs["drums"]).parent, nested_output)
+        self.assertEqual(Path(result.outputs["no_drums"]).parent, nested_output)
+        self.assertFalse(any(path.is_file() for path in self.root.iterdir()))
+
+    def test_replacing_export_after_title_change_removes_old_files(self):
+        first = self.process()
+        self.assertEqual(first.status, "done", first.error)
+        old_drums = Path(first.outputs["drums"])
+        old_nodrums = Path(first.outputs["no_drums"])
+        self.assertTrue(old_drums.is_file())
+        self.assertTrue(old_nodrums.is_file())
+
+        self.args.replace_existing = True
+        with patch.object(run, "_fetch_item_metadata", return_value={
+            "title": "New Artist - Renamed Song", "artist": "New Artist", "duration_seconds": 1,
+        }):
+            replaced = self.process()
+        self.assertEqual(replaced.status, "done", replaced.error)
+        self.assertNotEqual(Path(replaced.outputs["drums"]).name, old_drums.name)
+        self.assertFalse(old_drums.exists())
+        self.assertFalse(old_nodrums.exists())
+        self.assertTrue(Path(replaced.outputs["drums"]).is_file())
+        self.assertTrue(Path(replaced.outputs["no_drums"]).is_file())
+
+    def test_gather_inputs_with_flag_does_not_read_open_stdin(self):
+        class BlockingStdin:
+            def isatty(self):
+                return False
+
+            def read(self):
+                raise AssertionError("stdin should not be read when -i inputs are supplied")
+
+        args = run.build_parser().parse_args(["-i", "https://youtu.be/" + self.wid])
+        with patch.object(run.sys, "stdin", BlockingStdin()):
+            items = run.gather_inputs(args)
+        self.assertEqual([item.watch_id for item in items], [self.wid])
+
+        expected_wid = self.wid
+
+        class PipedStdin:
+            def isatty(self):
+                return False
+
+            def read(self):
+                return "https://youtu.be/" + expected_wid + "\n"
+
+        bare_args = run.build_parser().parse_args([])
+        with patch.object(run.sys, "stdin", PipedStdin()):
+            piped = run.gather_inputs(bare_args)
+        self.assertEqual([item.watch_id for item in piped], [self.wid])
 
 
 class QueueRunnerTests(unittest.TestCase):

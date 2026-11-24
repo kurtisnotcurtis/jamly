@@ -6,7 +6,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import url2pathname
 
 WATCH_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
@@ -73,7 +73,7 @@ def _parse_file_uri(source: str) -> Path:
         raise InputError("Remote file:// hosts are not supported")
     if parsed.query or parsed.fragment or not parsed.path:
         raise InputError("Invalid file:// URI")
-    raw_path = url2pathname(unquote(parsed.path))
+    raw_path = url2pathname(parsed.path)
     validate_local_audio_suffix(Path(raw_path).suffix, raw_path)
     return Path(raw_path).expanduser().resolve()
 

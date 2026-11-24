@@ -23,8 +23,9 @@ of this release.
 `run.process_one` validates one media item (fetching remote metadata and audio through the installed
 interpreter's yt-dlp, or probing local audio files directly via ffprobe/soundfile without network
 access), invokes an isolated Demucs worker, and publishes the requested stem exports. Collections,
-remote `file://` hosts, and active live streams are rejected before download. Deno is resolved from
-the same Python environment.
+remote `file://` hosts, active live streams, media longer than 60 minutes, and inputs larger than
+512 MB are rejected before separation; downloads and Demucs separation run with bounded timeouts.
+Deno is resolved from the same Python environment.
 
 `demucs_worker` uses the Demucs API, emits chunk-level progress percentages, and writes its raw
 estimates as float32 WAV with soundfile. There is no per-stem rescaling or clamping. `models` defines
@@ -51,17 +52,21 @@ SHA-256 checksums) live under `<output>/.jamly/<stable-id>/<model>/[<stem>/]<for
 
 A per-track/model/format lock prevents overlapping publishers. All output files are completed in a
 sibling staging directory under `.jamly/`, then atomically published into `<output>/` alongside the
-manifest swap. Replacement backs up any superseded manifest and audio files before swapping the new
-generation into place; a failed swap restores the backup, and an interrupted swap is recovered before
-the next attempt.
+manifest swap (locating the export root from the final `.jamly` segment so output paths containing
+`.jamly` publish to the intended folder). Replacement backs up any superseded manifest and audio
+files before swapping the new generation into place and removes superseded stem filenames when a
+title changes; a failed swap restores the backup, and an interrupted swap is recovered before the
+next attempt.
 
 Readers never receive a mixture of files from a partially published directory. During replacement
-there can be a short interval with no directory. Authenticated downloads check the generation
-under the same lock and return 409 if the result is being replaced or superseded.
+there can be a short interval with no directory. Authenticated downloads validate the generation and
+open the artifact under the lock, release the lock before streaming over the socket, and return 409
+if the result is being replaced or superseded.
 
-Existing outputs are reusable only when their processing version, identity, model, format and checksums
-match. Cache lookup precedes network/model work. Metadata and audio are published together. Selecting
-another preset neither reuses nor replaces the first preset's files. Older layouts remain untouched.
+Existing outputs are reusable only when their processing version, identity, model, format, checksums,
+and (for local audio files) source file size and SHA-256 match. Cache lookup precedes network/model
+work. Metadata and audio are published together. Selecting another preset neither reuses nor replaces
+the first preset's files. Older layouts remain untouched.
 
 ## Queue and lifecycle
 
@@ -109,18 +114,24 @@ Saved UI preferences are validated and atomically persisted separately from the 
 installation configuration; explicit backend CLI arguments override saved preferences at startup.
 An accepted job retains its original settings even if the defaults change.
 
-A private per-user token or a companion session is required for jobs, status and stem playback. The unauthenticated health probe
-contains no paths or credentials. Origin and Host checks are independent of authentication. Result
-URLs (`/outputs/...` and `/source/...`) refer only to known completed artifacts (or verified retained
-source audio recorded after completion), never arbitrary client-supplied filesystem paths or proxied
-remote URLs. Local file uploads stored in private state are cleaned up when their jobs are cleared or
-orphaned.
+A private per-user token (at least 32 non-whitespace ASCII characters, supplied via `server-token`,
+`JAMLY_SERVER_TOKEN`, or `--server-token-file`) or a 24-hour companion session is required for jobs,
+status and stem playback. The unauthenticated health probe contains no paths or credentials. Origin
+and Host checks are independent of authentication; extension origins are rejected unless explicitly
+authorized via `--allow-origin` or the companion's extension setup. Result URLs (`/outputs/...` and
+`/source/...`) refer only to known completed artifacts (or verified retained source audio strictly
+inside the export directory or matching the job's own local source), never arbitrary client-supplied
+filesystem paths or proxied remote URLs. Local file uploads stored in private state are tracked in an
+explicit ledger (`uploads-ledger.json`); startup pruning and list removal delete only files Jamly
+created, and `--queue` never infers `--state-dir`.
 
 Automatic pairing delivers a two-minute, single-use launch ticket in a private local HTML file.
 The browser submits it in a POST body, receives a 24-hour session token, and stores that token in
 tab-scoped sessionStorage. The launch file is removed after use; stale tickets cannot be replayed.
-No credential is put in a URL, command line, log or cookie. Static UI assets expose no secrets.
-Manual pairing remains available for advanced clients.
+A 24-hour companion session cannot mint launch files or read the permanent pairing token (extension
+setup exports assets, manages authorized extension origins, and displays the local CLI token
+command). No credential is put in a URL, command line, log or cookie. Static UI assets expose no
+secrets. Manual pairing remains available for advanced clients.
 
 The companion does not offer browser downloads; finished files are already in the output folder.
 For playback it fetches the selected stem with the session token in an Authorization header and plays
@@ -129,9 +140,11 @@ held in memory while loaded. UI pages use a same-origin referrer policy, a restr
 blocking. Only the ticket-exchange endpoint permits a null file-origin; other browser origins remain
 restricted. Desktop actions are limited to loopback servers.
 
-The extension renders server text with DOM text APIs, shows failed HTTP requests, and uses the
-browser download manager with an Authorization header. Tokens are not placed in result URLs.
-The optional userscript is a limited status/enqueue helper, not a second full application.
+The extension and optional userscript verify the backend via the `/handshake` HMAC challenge before
+attaching the pairing token, so a stand-in listener on the port cannot harvest credentials. The
+extension renders server text with DOM text APIs, shows failed HTTP requests, and uses the browser
+download manager with an Authorization header. Tokens are not placed in result URLs. The optional
+userscript is a limited status/enqueue helper, not a second full application.
 
 ## Installed environment
 
@@ -186,9 +199,13 @@ from the release number.
 
 To cut a release, run `uv run --locked python tools/version.py --set X.Y.Z`, run the test and lint
 suites, commit on `main`, and push an annotated `vX.Y.Z` tag. Tag pushes trigger `companions.yml`,
-which verifies the tag against `tools/version.py`, builds and smoke-tests the four desktop companion
-archives alongside a single shared native source archive, renders release manifests for WinGet,
-AUR (`jamly-bin`), and the Homebrew Tap, packages the browser extension and userscript, writes
-`SHA256SUMS.txt`, and publishes the GitHub Release; configured repository secrets then push or submit
-updated manifests to the Homebrew Tap, AUR (`jamly-bin`), and `microsoft/winget-pkgs`, while `pypi.yml`
-publishes `jamly-audio-sep` to PyPI via Trusted Publishing when `PYPI_PUBLISH_ENABLED` is enabled.
+which gates release creation on the full CI test suite (`ci.yml`), verifies the tag against
+`tools/version.py`, compiles native audio tools fresh from their checksum-pinned sources without
+restoring build caches, installs the SHA-256-pinned Linux CPU-only PyTorch wheel
+(`tools/linux-cpu-torch.json`), smoke-tests the four desktop companion archives alongside a single
+shared native source archive, renders release manifests for WinGet, AUR (`jamly-bin`), and the
+Homebrew Tap, packages the browser extension and userscript, writes `SHA256SUMS.txt`, and publishes
+the GitHub Release (refusing to clobber an existing release); configured repository secrets then push
+or submit updated manifests to the Homebrew Tap, AUR (`jamly-bin`), and `microsoft/winget-pkgs`,
+while `pypi.yml` gates `jamly-audio-sep` publication on `ci.yml` and a matching `v*` tag via Trusted
+Publishing when `PYPI_PUBLISH_ENABLED` is enabled.

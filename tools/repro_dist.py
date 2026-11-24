@@ -86,8 +86,10 @@ def _canonical_wheel(path: Path) -> None:
             norm = _maybe_lf(zi.filename, data)
             info = zipfile.ZipInfo(zi.filename, date_time=DATE_TIME)
             info.compress_type = zi.compress_type
-            info.external_attr = zi.external_attr & 0xFFFF0000  # keep file mode bits
-            info.external_attr |= 0x10 << 16  # 0o100000: regular POSIX file
+            mode = (zi.external_attr >> 16) & 0o777
+            if not mode:
+                mode = 0o644
+            info.external_attr = (0o100000 | mode) << 16  # S_IFREG regular POSIX file + permission bits
             info.create_system = 3  # Unix, host-independent
             info.create_version = ZIP_VERSION_20
             dst.writestr(info, norm)

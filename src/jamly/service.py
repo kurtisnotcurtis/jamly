@@ -44,14 +44,14 @@ def render_service(platform: str, python: str, config: PurePath, state: PurePath
             "[Unit]", "Description=Jamly local audio backend", "After=network.target", "",
             "[Service]", "Type=simple", "WorkingDirectory=" + _systemd_quote(str(state)),
             "ExecStart=" + " ".join(_systemd_quote(arg).replace("$", "$$") for arg in command),
-            "KillMode=mixed", "Restart=on-failure", "RestartSec=5", "", "[Install]",
+            "KillMode=mixed", "Restart=on-failure", "RestartPreventExitStatus=2", "RestartSec=5", "", "[Install]",
             "WantedBy=default.target", "",
         ))
         return root / "systemd" / "user" / UNIT, content.encode()
     if platform == "darwin":
         data = {
             "Label": LABEL, "ProgramArguments": command, "WorkingDirectory": str(state),
-            "RunAtLoad": True, "KeepAlive": {"SuccessfulExit": False},
+            "RunAtLoad": True, "KeepAlive": {"Crashed": True}, "ThrottleInterval": 10,
             "StandardOutPath": str(state / "server.log"), "StandardErrorPath": str(state / "server-error.log"),
         }
         return home / "Library" / "LaunchAgents" / (LABEL + ".plist"), plistlib.dumps(data)
@@ -173,7 +173,7 @@ def main(argv=None) -> int:
                 print(json.dumps({"config": settings, "definition": str(definition), "commands": commands}, indent=2))
                 print(content.decode("utf-16" if sys.platform == "win32" else "utf-8"))
                 return 0
-            state.mkdir(parents=True, exist_ok=True)
+            state.mkdir(parents=True, exist_ok=True, mode=0o700)
             pairing_token(state)
             write_private_json(settings_path, settings)
             definition.parent.mkdir(parents=True, exist_ok=True)

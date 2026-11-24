@@ -7,11 +7,13 @@ import hmac
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shlex
 import subprocess
 import sys
 import tempfile
+from urllib.parse import urlsplit
 
 from filelock import FileLock
 from platformdirs import user_data_path
@@ -23,6 +25,9 @@ from .models import (
 )
 
 API_VERSION = 3
+MIN_TOKEN_LENGTH = 32
+_CHROME_EXT_ID_RE = re.compile(r"^[a-p]{32}$")
+_MOZ_EXT_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
 def state_directory(value: str | None = None) -> Path:
@@ -41,8 +46,7 @@ def runtime_paths(args: argparse.Namespace) -> tuple[Path, Path]:
     queue = args.queue or os.environ.get("JAMLY_QUEUE")
     explicit_state = (args.state_dir or os.environ.get("JAMLY_STATE_DIR")
                       or os.environ.get("JAMLY_SCOPE"))
-    state = (state_directory(explicit_state) if explicit_state or not queue
-             else Path(queue).expanduser().absolute().parent)
+    state = state_directory(explicit_state)
     return state, Path(queue).expanduser().absolute() if queue else state / "jamly_queue.json"
 
 
@@ -118,18 +122,67 @@ def pairing_proof(token: str, nonce: str, url: str, queue: Path) -> str:
     return hmac.new(token.encode(), context, hashlib.sha256).hexdigest()
 
 
+def client_pairing_proof(token: str, nonce: str, port: int) -> str:
+    context = json.dumps(["jamly-client-v1", nonce, int(port)],
+                         separators=(",", ":")).encode()
+    return hmac.new(token.encode(), context, hashlib.sha256).hexdigest()
+
+
+def validate_token(token: str) -> str:
+    if (not isinstance(token, str) or len(token) < MIN_TOKEN_LENGTH
+            or not token.isascii() or any(c.isspace() for c in token)):
+        raise ValueError(
+            "the server token must be at least %d non-whitespace ASCII characters" % MIN_TOKEN_LENGTH
+        )
+    return token
+
+
+def read_token_file(path: str | Path) -> str:
+    token_file = Path(path).expanduser()
+    token = token_file.read_text(encoding="utf-8").strip()
+    return validate_token(token)
+
+
+def validate_allowed_origin(origin: str) -> str:
+    if not isinstance(origin, str) or not origin.strip() or "*" in origin:
+        raise ValueError("Use exact origin values, not '*'")
+    value = origin.strip()
+    parsed = urlsplit(value)
+    if (parsed.scheme not in ("http", "https", "chrome-extension", "moz-extension")
+            or not parsed.netloc or parsed.username or parsed.password
+            or parsed.path not in ("", "/") or parsed.query or parsed.fragment):
+        raise ValueError("Invalid allowed origin: %s" % value)
+    if value.endswith("/"):
+        value = value.rstrip("/")
+    return value
+
+
+def validate_extension_origin(origin: str) -> str:
+    value = validate_allowed_origin(origin)
+    parsed = urlsplit(value)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme == "chrome-extension" and _CHROME_EXT_ID_RE.fullmatch(host) and parsed.port is None:
+        return "chrome-extension://" + host
+    if parsed.scheme == "moz-extension" and _MOZ_EXT_ID_RE.fullmatch(host) and parsed.port is None:
+        return "moz-extension://" + host
+    raise ValueError("Enter a valid chrome-extension:// or moz-extension:// origin")
+
+
 def token_command(state_dir: Path) -> str:
     command = ["jamly-service", "token", "--state-dir", str(state_dir)]
     return subprocess.list2cmdline(command) if os.name == "nt" else shlex.join(command)
 
 
-def pairing_token(state_dir: Path, explicit: str | None = None) -> str:
-    token = explicit or os.environ.get("JAMLY_SERVER_TOKEN")
-    if token:
-        if not token.isascii() or any(c.isspace() for c in token):
-            raise ValueError("the server token must contain only non-whitespace ASCII characters")
-        return token
-    state_dir.mkdir(parents=True, exist_ok=True)
+def pairing_token(state_dir: Path, explicit: str | None = None, *,
+                  token_file: str | Path | None = None) -> str:
+    if explicit is not None and explicit != "":
+        return validate_token(explicit)
+    if token_file:
+        return read_token_file(token_file)
+    env_token = os.environ.get("JAMLY_SERVER_TOKEN")
+    if env_token:
+        return validate_token(env_token)
+    state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = token_path(state_dir)
     with FileLock(str(path) + ".lock", timeout=5):
         try:
@@ -140,9 +193,10 @@ def pairing_token(state_dir: Path, explicit: str | None = None) -> str:
             token = secrets.token_urlsafe(32)
             with os.fdopen(fd, "w", encoding="utf-8") as file:
                 file.write(token + "\n")
-    if not token or not token.isascii() or any(c.isspace() for c in token):
-        raise ValueError("invalid pairing token file: %s" % path)
-    return token
+    try:
+        return validate_token(token)
+    except ValueError as exc:
+        raise ValueError("invalid pairing token file %s: %s" % (path, exc)) from exc
 
 
 def validate_preferences(data: dict) -> dict:
@@ -172,7 +226,7 @@ def validate_preferences(data: dict) -> dict:
 
 
 def write_private_json(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,

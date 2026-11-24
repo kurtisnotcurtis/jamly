@@ -183,6 +183,8 @@ def main() -> int:
     parser.add_argument("--jobs", type=int, default=4, help="Native compilation parallelism")
     parser.add_argument("--skip-native-sources", action="store_true",
                         help="Skip creating the shared Jamly-<version>-native-sources.zip archive")
+    parser.add_argument("--rebuild-native", action="store_true",
+                        help="Rebuild native dependencies from source instead of reusing built.json")
     args = parser.parse_args()
     import soundfile
     from deno import find_deno_bin
@@ -196,7 +198,7 @@ def main() -> int:
     if not (Path(sys.base_prefix) / "BUILD").is_file():
         raise RuntimeError("Use uv-managed Python for desktop builds: "
                            "uv sync --locked --group bundle --managed-python --python 3.12")
-    build(ROOT / "build" / "native-audio", args.jobs)
+    build(ROOT / "build" / "native-audio", args.jobs, rebuild=args.rebuild_native)
     inventory = notices(staging)
     identity = sys.platform + "-" + platform.machine().lower()
     deno = Path(find_deno_bin())
