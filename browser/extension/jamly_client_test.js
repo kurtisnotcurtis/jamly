@@ -1,17 +1,43 @@
 "use strict";
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
+const fs = require("node:fs");
 const http = require("node:http");
+const path = require("node:path");
+const vm = require("node:vm");
 const { test } = require("node:test");
 const client = require("./jamly_client.js");
 
-async function backend(t) {
+function makeClientProof(token, nonce, port) {
+  const context = JSON.stringify(["jamly-client-v1", nonce, port]);
+  return crypto.createHmac("sha256", token).update(context).digest("hex");
+}
+
+async function backend(t, { token = "paired-token-0123456789abcdef012345", failHandshake = false } = {}) {
   const received = [];
+  const authHeaders = [];
   const server = http.createServer((request, response) => {
     const chunks = [];
     request.on("data", chunk => chunks.push(chunk));
     request.on("end", () => {
       response.setHeader("Content-Type", "application/json");
-      if (request.headers.authorization !== "Bearer paired") {
+      if (request.headers.authorization) {
+        authHeaders.push({ url: request.url, auth: request.headers.authorization });
+      }
+      if (request.url.startsWith("/handshake?")) {
+        const parsed = new URL("http://127.0.0.1" + request.url);
+        const nonce = parsed.searchParams.get("nonce") || "";
+        if (failHandshake) {
+          response.end(JSON.stringify({ api_version: 3, client_proof: "0".repeat(64) }));
+          return;
+        }
+        response.end(JSON.stringify({
+          api_version: 3,
+          client_proof: makeClientProof(token, nonce, server.address().port),
+        }));
+        return;
+      }
+      if (request.headers.authorization !== "Bearer " + token) {
         response.writeHead(401);
         response.end(JSON.stringify({ error: "Pair the client first" }));
         return;
@@ -28,7 +54,11 @@ async function backend(t) {
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  return { config: { url: "http://127.0.0.1:" + server.address().port, token: "paired" }, received };
+  return {
+    config: { url: "http://127.0.0.1:" + server.address().port, token },
+    received,
+    authHeaders,
+  };
 }
 
 test("paired JSON status, submission and retry preserve input and options", async t => {
@@ -52,9 +82,69 @@ test("paired JSON status, submission and retry preserve input and options", asyn
 });
 
 test("HTTP errors reject rather than becoming successful queue responses", async t => {
-  const { config } = await backend(t);
+  const { config, authHeaders } = await backend(t);
   await assert.rejects(client.status({ ...config, token: "" }), /Pair the client first/);
-  await assert.rejects(client.addInputs({ ...config, token: "wrong" }, ["url"]), /Pair the client first/);
+  await assert.rejects(
+    client.addInputs({ ...config, token: "wrong-token-0123456789abcdef012345" }, ["url"]),
+    /identity/,
+  );
+  // Handshake mismatch stopped the request before attaching Authorization.
+  assert.equal(authHeaders.length, 0);
+});
+
+test("stand-in listener that fails handshake never receives the pairing token", async t => {
+  const { config, authHeaders } = await backend(t, { failHandshake: true });
+  await assert.rejects(client.status(config), /identity/);
+  await assert.rejects(client.addInputs(config, ["https://example.test/a"]), /identity/);
+  await assert.rejects(client.retry(config, "id"), /identity/);
+  await assert.rejects(client.cancel(config, "id"), /identity/);
+  assert.deepEqual(authHeaders, []);
+});
+
+test("userscript verifies backend handshake before attaching its pairing token", async () => {
+  const seen = [];
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "userscripts", "jamly.user.js"),
+    "utf8",
+  );
+  const elements = [];
+  function fakeElement() {
+    return {
+      style: {}, textContent: "", disabled: false,
+      append(...children) { elements.push(...children); },
+      appendChild(child) { elements.push(child); },
+      addEventListener() {},
+      remove() {},
+    };
+  }
+  let doneResolve;
+  const done = new Promise(resolve => { doneResolve = resolve; });
+  const context = {
+    crypto: globalThis.crypto,
+    TextEncoder: globalThis.TextEncoder,
+    Uint8Array: globalThis.Uint8Array,
+    location: { href: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" },
+    window: { prompt() { return ""; } },
+    document: { createElement: fakeElement, body: fakeElement() },
+    setTimeout() { doneResolve(); return 1; },
+    clearTimeout() {},
+    GM_registerMenuCommand() {},
+    GM_getValue(key, fallback) { return key === "token" ? "userscript-secret-token-0123456789ab" : fallback; },
+    GM_setValue() {},
+    GM_xmlhttpRequest(opts) {
+      seen.push({ url: opts.url, headers: opts.headers || {} });
+      // Stand-in listener returns bogus handshake proof.
+      opts.onload({
+        status: 200,
+        responseText: JSON.stringify({ api_version: 3, client_proof: "f".repeat(64) }),
+      });
+    },
+  };
+  vm.runInNewContext(source, context);
+  await done;
+  assert.equal(seen.length, 1);
+  assert.match(seen[0].url, /\/handshake\?nonce=[a-f0-9]{64}$/);
+  assert.equal(seen[0].headers.Authorization, undefined);
 });
 
 test("artifact downloads stay on the paired backend", () => {

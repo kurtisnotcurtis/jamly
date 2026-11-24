@@ -20,6 +20,8 @@ PLATFORM_WINDOWS = os.name == "nt"
 ENGINE_HTDEMUCS = "htdemucs"
 FORMAT_WAV = "wav"
 FORMAT_MP3 = "mp3"
+MAX_MEDIA_BYTES = 512 * 1024 * 1024
+SEPARATION_TIMEOUT = 60 * 60
 
 
 def _abs(path: str) -> str:
@@ -168,7 +170,8 @@ def build_ytdlp_extract_cmd(
     cmd = command_prefix(ytdlp_exe) + ytdlp_options()
     cmd += ["-f", "bestaudio/best", "--extract-audio", "--audio-format", "best",
             "--audio-quality", "0", "--newline", "--no-write-thumbnail",
-            "--no-write-info-json", "--max-downloads", "1"]
+            "--no-write-info-json", "--max-downloads", "1",
+            "--max-filesize", str(MAX_MEDIA_BYTES)]
     if ffmpeg_dir:
         cmd += ["--ffmpeg-location", ffmpeg_dir]
     return cmd + ["-o", output_template, "--", url]
@@ -218,7 +221,8 @@ def build_demucs_cmd(python_exe: str, input_audio: str, workdir: str,
 
 def separate_stems(audio: str, workdir: str, threads: int = 0,
                    device: str = "auto", cancel_event=None, ffmpeg_dir=None,
-                   model: str = DEFAULT_MODEL, on_progress=None) -> dict[str, str]:
+                   model: str = DEFAULT_MODEL, on_progress=None,
+                   timeout: float | None = SEPARATION_TIMEOUT) -> dict[str, str]:
     validate_model(model)
     if not detect_engine():
         raise RuntimeError("demucs is missing; reinstall Jamly")
@@ -238,7 +242,7 @@ def separate_stems(audio: str, workdir: str, threads: int = 0,
             except ValueError:
                 pass
 
-    run_kwargs = {"cancel_event": cancel_event, "env": environment}
+    run_kwargs = {"cancel_event": cancel_event, "env": environment, "timeout": timeout}
     if on_progress is not None:
         run_kwargs.update(stream=True, on_line=handle_line)
     result = run(cmd, **run_kwargs)

@@ -33,20 +33,39 @@
     if (token) GM_setValue("token", token.trim());
   });
 
-  function request(path, body) {
+  const BACKEND_URL = "http://127.0.0.1:8765";
+  const BACKEND_PORT = 8765;
+
+  function hexBytes(bytes) {
+    return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  function constantTimeEqual(left, right) {
+    if (typeof left !== "string" || typeof right !== "string" || left.length !== right.length) {
+      return false;
+    }
+    let diff = 0;
+    for (let i = 0; i < left.length; i++) {
+      diff |= left.charCodeAt(i) ^ right.charCodeAt(i);
+    }
+    return diff === 0;
+  }
+
+  function gmJson(path, { method = "GET", headers = {}, body } = {}) {
     return new Promise((resolve, reject) => {
-      const headers = { Authorization: "Bearer " + GM_getValue("token", "") };
-      if (body !== undefined) headers["Content-Type"] = "application/json";
       GM_xmlhttpRequest({
-        url: "http://127.0.0.1:8765" + path,
-        method: body === undefined ? "GET" : "POST",
+        url: BACKEND_URL + path,
+        method,
         headers,
         data: body === undefined ? undefined : JSON.stringify(body),
+        anonymous: true,
         timeout: 10000,
         onload: response => {
           try {
             const value = JSON.parse(response.responseText);
-            if (response.status < 200 || response.status >= 300) throw new Error(value.error);
+            if (response.status < 200 || response.status >= 300) {
+              throw new Error(value.error || "Backend HTTP " + response.status);
+            }
             resolve(value);
           } catch (error) { reject(error); }
         },
@@ -54,6 +73,42 @@
         ontimeout: () => reject(new Error("Jamly request timed out.")),
       });
     });
+  }
+
+  async function verifyBackend(token) {
+    if (!crypto?.subtle || !crypto?.getRandomValues) {
+      throw new Error("Web Crypto is required to verify the Jamly backend.");
+    }
+    const nonceBytes = new Uint8Array(32);
+    crypto.getRandomValues(nonceBytes);
+    const nonce = hexBytes(nonceBytes);
+    const handshake = await gmJson("/handshake?nonce=" + nonce, {
+      headers: { Accept: "application/json" },
+    });
+    if (handshake.api_version !== 3) {
+      throw new Error("Update the backend and userscript together.");
+    }
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw", encoder.encode(token), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+    );
+    const context = JSON.stringify(["jamly-client-v1", nonce, BACKEND_PORT]);
+    const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(context));
+    const expected = hexBytes(new Uint8Array(signature));
+    if (!constantTimeEqual(handshake.client_proof, expected)) {
+      throw new Error("Backend identity mismatch; no pairing token was sent.");
+    }
+  }
+
+  async function request(path, body) {
+    const token = String(GM_getValue("token", "") || "").trim();
+    if (!token) {
+      throw new Error("Use the Pair Jamly userscript menu to set your pairing token.");
+    }
+    await verifyBackend(token);
+    const headers = { Accept: "application/json", Authorization: "Bearer " + token };
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    return gmJson(path, { method: body === undefined ? "GET" : "POST", headers, body });
   }
 
   async function poll() {

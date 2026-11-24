@@ -155,7 +155,7 @@ def ensure_backend(args, state: Path, queue: Path, token: str) -> str:
 
 
 def show_startup_error(state: Path, message: str) -> None:
-    state.mkdir(parents=True, exist_ok=True)
+    state.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = state / "startup-error.html"
     content = (
         '<!doctype html><html lang="en"><meta charset="utf-8"><title>Jamly could not start</title>'
@@ -181,8 +181,8 @@ def main(argv=None) -> int:
         state, queue = runtime_paths(args)
         if not _is_loopback_host(args.host):
             raise ValueError("The desktop companion only connects to loopback addresses")
-        state.mkdir(parents=True, exist_ok=True)
-        token = pairing_token(state, args.server_token)
+        state.mkdir(parents=True, exist_ok=True, mode=0o700)
+        token = pairing_token(state, token_file=args.server_token_file)
         with FileLock(str(state / "companion-launch.lock"), timeout=60):
             url = ensure_backend(args, state, queue, token)
             overrides = argparse.ArgumentParser(add_help=False)

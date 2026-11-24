@@ -1,6 +1,9 @@
 (function () {
   "use strict";
   const byId = id => document.getElementById(id);
+  if (byId("ext-origin")) {
+    byId("ext-origin").textContent = location.origin;
+  }
   chrome.storage.local.get(["jamly_serverUrl", "jamly_serverToken"]).then(stored => {
     byId("url").value = stored.jamly_serverUrl || "http://127.0.0.1:8765";
     byId("token").value = stored.jamly_serverToken || "";

@@ -1,7 +1,9 @@
 import http.client
 import json
+import os
 from pathlib import Path
 import re
+import socket
 import sys
 import tempfile
 import threading
@@ -10,10 +12,16 @@ import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import unquote, urlencode, urlsplit
 
+from filelock import FileLock
+
 from jamly import companion, config, core, server
 from jamly.outputs import PROCESSING_VERSION, checksum
 from jamly.run import ItemResult
 from jamly.watch_queue import QueueError, WatchQueue
+
+TEST_TOKEN = "test-token-0123456789abcdef0123456789"
+REMOTE_TOKEN = "remote-token-0123456789abcdef01234567"
+TEST_EXT_ORIGIN = "chrome-extension://" + "a" * 32
 
 
 class ServerTests(unittest.TestCase):
@@ -25,11 +33,12 @@ class ServerTests(unittest.TestCase):
         argv = [
             "--port", "0", "--queue", str(root / "queue.json"),
             "--state-dir", str(root),
-            "--output-dir", str(root / "output"), "--server-token", "test-token",
+            "--output-dir", str(root / "output"),
         ]
         if extra_args:
             argv.extend(extra_args)
         args = server.build_parser().parse_args(argv)
+        self.enterContext(patch.dict(os.environ, {"JAMLY_SERVER_TOKEN": TEST_TOKEN}))
         self.enterContext(patch.object(
             server, "process_one", side_effect=process or
             (lambda wid, args, **kwargs: ItemResult(wid, status="done"))
@@ -49,7 +58,7 @@ class ServerTests(unittest.TestCase):
     def request(self, method, path, body=None, *, auth=True, headers=None, raw=False):
         headers = dict(headers or {})
         if auth:
-            headers["Authorization"] = "Bearer test-token"
+            headers["Authorization"] = "Bearer " + TEST_TOKEN
         data = None
         if method == "POST":
             headers.setdefault("Content-Type", "application/json")
@@ -109,13 +118,13 @@ class ServerTests(unittest.TestCase):
 
         with patch.object(server.QueueStatusHandler, "_allowed_request", capture):
             with self.assertRaisesRegex(RuntimeError, "identity"):
-                companion._connect(self.app.base_url, "test-token", self.root / "different-queue.json")
+                companion._connect(self.app.base_url, TEST_TOKEN, self.root / "different-queue.json")
             self.assertEqual(received, [None])
             received.clear()
-            self.assertTrue(companion._connect(self.app.base_url, "test-token", Path(self.app.queue_path)))
+            self.assertTrue(companion._connect(self.app.base_url, TEST_TOKEN, Path(self.app.queue_path)))
             self.assertEqual(received, [None])
-            companion.request(self.app.base_url, "test-token", "/app/launch", {})
-            self.assertEqual(received, [None, "Bearer test-token"])
+            companion.request(self.app.base_url, TEST_TOKEN, "/app/launch", {})
+            self.assertEqual(received, [None, "Bearer " + TEST_TOKEN])
 
     def test_launcher_pairs_through_a_private_single_use_file_not_a_url(self):
         self.start()
@@ -142,6 +151,17 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request("GET", "/status", auth=False, headers={
             "Authorization": "Bearer " + token, "Origin": self.app.base_url,
         })[0], 200)
+        # A 24-hour companion session cannot fetch the permanent master token or mint new launch files.
+        ext_code, ext_payload, _ = self.request("POST", "/app/extension", {}, auth=False, headers={
+            "Authorization": "Bearer " + token, "Origin": self.app.base_url,
+        })
+        self.assertEqual(ext_code, 200)
+        self.assertNotIn("token", ext_payload)
+        self.assertIn("token_command", ext_payload)
+        self.assertNotIn(self.app._token, json.dumps(ext_payload))
+        self.assertEqual(self.request("POST", "/app/launch", {}, auth=False, headers={
+            "Authorization": "Bearer " + token, "Origin": self.app.base_url,
+        })[0], 403)
         self.assertEqual(self.request("POST", "/app/session", body, auth=False, headers=headers)[0], 400)
         with patch("jamly.companion_ui.time.monotonic", return_value=time.monotonic() + 86401):
             self.assertEqual(self.request("GET", "/status", auth=False, headers={
@@ -171,24 +191,49 @@ class ServerTests(unittest.TestCase):
 
     def test_unrelated_origin_or_host_is_rejected_even_with_token(self):
         self.start()
+        nonce = "ab" * 32
         for headers in ({"Origin": "https://unrelated.example"}, {"Host": "unrelated.example"},
                         {"Origin": "null"}, {"Host": "localhost:invalid"},
                         {"Origin": "http://127.0.0.2:%d" % self.app._server.server_address[1]},
-                        {"Origin": "chrome-extension://[invalid"}):
+                        {"Origin": "chrome-extension://[invalid"},
+                        {"Origin": "chrome-extension://example"},
+                        {"Origin": TEST_EXT_ORIGIN}):
             code, _, _ = self.request("POST", "/add", {"inputs": [self.source]}, headers=headers)
             self.assertEqual(code, 403)
+        # Unpaired extension origins must not receive a /handshake proof either.
+        code, _, _ = self.request("GET", "/handshake?nonce=" + nonce, auth=False,
+                                  headers={"Origin": TEST_EXT_ORIGIN})
+        self.assertEqual(code, 403)
         self.assertEqual(self.app.queue.items, [])
 
-    def test_extension_preflight_allows_authorization_without_wildcard(self):
+    def test_extension_preflight_and_handshake_require_explicit_allowed_origin(self):
         self.start()
+        nonce = "cd" * 32
+        # Unpaired extension origin is rejected on OPTIONS and /handshake.
+        self.assertEqual(self.request("OPTIONS", "/add", auth=False, headers={
+            "Origin": TEST_EXT_ORIGIN,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        })[0], 403)
+        # Authorizing the exact extension origin via /app/extension enables preflight and handshake.
+        code, setup, _ = self.request("POST", "/app/extension", {"allow_origin": TEST_EXT_ORIGIN})
+        self.assertEqual(code, 200)
+        self.assertEqual(setup["allowed_origins"], [TEST_EXT_ORIGIN])
         code, _, headers = self.request("OPTIONS", "/add", auth=False, headers={
-            "Origin": "chrome-extension://example",
+            "Origin": TEST_EXT_ORIGIN,
             "Access-Control-Request-Method": "POST",
             "Access-Control-Request-Headers": "authorization,content-type",
         })
         self.assertEqual(code, 204)
-        self.assertEqual(headers["Access-Control-Allow-Origin"], "chrome-extension://example")
+        self.assertEqual(headers["Access-Control-Allow-Origin"], TEST_EXT_ORIGIN)
         self.assertIn("Authorization", headers["Access-Control-Allow-Headers"])
+        hs_code, hs_body, _ = self.request("GET", "/handshake?nonce=" + nonce, auth=False,
+                                           headers={"Origin": TEST_EXT_ORIGIN})
+        self.assertEqual(hs_code, 200)
+        expected_proof = config.client_pairing_proof(
+            TEST_TOKEN, nonce, self.app._server.server_address[1]
+        )
+        self.assertEqual(hs_body["client_proof"], expected_proof)
 
     def test_invalid_payloads_return_client_errors(self):
         self.start()
@@ -302,12 +347,15 @@ class ServerTests(unittest.TestCase):
             code, _, _ = self.request("GET", "/source/" + http_wid)
             self.assertEqual(code, 404)
 
-            # Even if original_path in a queue record were tampered to a non-audio file, /source refuses it.
-            with self.app._status_lock:
-                self.app.queue.finish(http_wid, "done", original_path=str(secret))
-                self.app.queue.save()
-            code, _, _ = self.request("GET", "/source/" + http_wid)
-            self.assertEqual(code, 404)
+            # Even if original_path in a queue record were tampered to a non-audio or outside audio file, /source refuses it.
+            external_m4a = Path(folder) / "private-voice-memo.m4a"
+            external_m4a.write_bytes(b"ftypM4A-private")
+            for tampered in (secret, external_m4a):
+                with self.app._status_lock:
+                    self.app.queue.finish(http_wid, "done", original_path=str(tampered))
+                    self.app.queue.save()
+                code, _, _ = self.request("GET", "/source/" + http_wid)
+                self.assertEqual(code, 404)
 
     def test_error_survives_reload_and_explicit_retry_succeeds(self):
         attempts = []
@@ -548,24 +596,230 @@ class ServerTests(unittest.TestCase):
         self.assertFalse(uploaded_path.exists())
         self.assertFalse(uploaded_path.parent.exists())
 
-    def test_orphaned_uploads_are_pruned_on_startup(self):
-        with tempfile.TemporaryDirectory() as root:
+    def test_orphaned_uploads_are_pruned_without_deleting_unrelated_files(self):
+        with tempfile.TemporaryDirectory() as root, patch.dict(
+            os.environ, {"JAMLY_SERVER_TOKEN": TEST_TOKEN}
+        ):
             state = Path(root)
+            unrelated_png = state / "uploads" / "avatar.png"
+            unrelated_pdf = state / "uploads" / "2024" / "invoices" / "march.pdf"
+            unrelated_wav = state / "uploads" / "user-song.wav"
+            unrelated_pdf.parent.mkdir(parents=True)
+            unrelated_png.write_bytes(b"png")
+            unrelated_pdf.write_bytes(b"pdf")
+            unrelated_wav.write_bytes(b"RIFFuser")
+
+            # Managed upload left orphaned after restart IS pruned; unrelated files are untouched.
             orphan_dir = state / "uploads" / "deadbeef01234567"
             orphan_dir.mkdir(parents=True)
             orphan_file = orphan_dir / "abandoned.wav"
             orphan_file.write_bytes(b"abandoned")
+            config.write_private_json(
+                state / "uploads-ledger.json",
+                {"files": ["deadbeef01234567/abandoned.wav"]},
+            )
             args = server.build_parser().parse_args([
                 "--port", "0", "--queue", str(state / "queue.json"),
                 "--state-dir", str(state),
-                "--output-dir", str(state / "output"), "--server-token", "test-token",
+                "--output-dir", str(state / "output"),
             ])
             app = server.ItemServer(args)
             try:
                 self.assertFalse(orphan_file.exists())
                 self.assertFalse(orphan_dir.exists())
+                self.assertTrue(unrelated_png.is_file())
+                self.assertTrue(unrelated_pdf.is_file())
+                self.assertTrue(unrelated_wav.is_file())
+                # Clearing a job referencing an unmanaged file inside uploads/ must NOT delete it.
+                app.enqueue([str(unrelated_wav)])
+                wid = app.queue.items[0]["watch_id"]
+                with app._status_lock:
+                    app.queue.finish(wid, "done", original_path=str(unrelated_wav))
+                    app.queue.save()
+                app.clear_jobs(wid)
+                self.assertTrue(unrelated_wav.is_file())
             finally:
                 app.stop()
+
+    def test_queue_flag_alone_never_adopts_project_directory_as_state_dir(self):
+        with tempfile.TemporaryDirectory() as root, patch.dict(
+            os.environ,
+            {
+                "JAMLY_SERVER_TOKEN": TEST_TOKEN,
+                "JAMLY_STATE_DIR": str(Path(root) / "isolated-state"),
+                "JAMLY_SCOPE": "",
+                "JAMLY_QUEUE": "",
+            },
+        ):
+            project = Path(root) / "my-project"
+            (project / "uploads").mkdir(parents=True)
+            avatar = project / "uploads" / "avatar.png"
+            avatar.write_bytes(b"keep-me")
+            args = server.build_parser().parse_args([
+                "--port", "0", "--queue", str(project / "jamly_queue.json"),
+                "--output-dir", str(Path(root) / "output"),
+            ])
+            app = server.ItemServer(args)
+            try:
+                self.assertEqual(app.state_dir.resolve(), (Path(root) / "isolated-state").resolve())
+                self.assertTrue(avatar.is_file())
+            finally:
+                app.stop()
+
+    def test_rescan_rejects_malformed_manifests_and_external_originals(self):
+        self.start()
+        out_root = self.root / "output"
+        outside_m4a = self.root / "outside-secret.m4a"
+        outside_m4a.write_bytes(b"secret-m4a")
+
+        def write_manifest_case(wid, extra):
+            meta_dir = out_root / ".jamly" / wid / "htdemucs" / "mp3"
+            meta_dir.mkdir(parents=True, exist_ok=True)
+            drums = out_root / f"{wid}_drums.mp3"
+            nodrums = out_root / f"{wid}_no_drums.mp3"
+            drums.write_bytes(b"drums")
+            nodrums.write_bytes(b"nodrums")
+            manifest = {
+                "watch_id": wid,
+                "source_url": "https://youtu.be/" + wid,
+                "title": "Track",
+                "processing_version": PROCESSING_VERSION,
+                "generation": "gen-" + wid,
+                "model": "htdemucs",
+                "stem": "drums",
+                "format": "mp3",
+                "outputs": {
+                    "drums": {"file": drums.name, "sha256": checksum(drums)},
+                    "no_drums": {"file": nodrums.name, "sha256": checksum(nodrums)},
+                },
+            }
+            manifest.update(extra)
+            (meta_dir / "metadata.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+        write_manifest_case("badSource01", {"source_url": 123})
+        write_manifest_case("extOrig0001", {"original": str(outside_m4a)})
+
+        code, rescanned, _ = self.request("POST", "/app/rescan", {})
+        self.assertEqual(code, 200)
+        self.assertEqual(rescanned["restored"], 1)
+        # Queue reloads cleanly (badSource01 was skipped).
+        reloaded = WatchQueue.from_path(self.app.queue_path)
+        self.assertIsNone(reloaded.get("badSource01"))
+        # extOrig0001 restored without outside original; /source returns 404.
+        restored = reloaded.get("extOrig0001")
+        self.assertIsNotNone(restored)
+        self.assertIsNone(restored["original_path"])
+        self.assertEqual(self.request("GET", "/source/extOrig0001")[0], 404)
+
+    def test_stream_errors_do_not_corrupt_body_and_get_bodies_are_rejected(self):
+        def process(wid, args, **_kwargs):
+            directory = Path(args.output_dir) / ".jamly" / wid / args.model / args.audio_format
+            directory.mkdir(parents=True, exist_ok=True)
+            audio_root = Path(args.output_dir)
+            drums = audio_root / f"{wid}_drums.mp3"
+            nodrums = audio_root / f"{wid}_no_drums.mp3"
+            drums.write_bytes(b"A" * (200 * 1024))
+            nodrums.write_bytes(b"B" * 1024)
+            manifest = {
+                "watch_id": wid, "processing_version": PROCESSING_VERSION,
+                "generation": "gen-stream", "model": args.model, "stem": args.stem,
+                "format": args.audio_format,
+                "outputs": {
+                    "drums": {"file": drums.name, "sha256": checksum(drums)},
+                    "no_drums": {"file": nodrums.name, "sha256": checksum(nodrums)},
+                },
+            }
+            meta = directory / "metadata.json"
+            meta.write_text(json.dumps(manifest), encoding="utf-8")
+            return ItemResult(
+                wid, status="done",
+                stem_paths={"drums": str(drums), "no_drums": str(nodrums)},
+                meta_path=str(meta), generation="gen-stream",
+            )
+
+        self.start(process)
+        self.request("POST", "/add", {"inputs": [self.source]})
+        state = self.wait_for(lambda s: s["done"] == 1)
+        drums_url = next(o["url"] for o in state["jobs"][0]["outputs"] if o["kind"] == "drums")
+        port = self.app._server.server_address[1]
+
+        # 1. GET with a body containing a smuggled second request produces a single 400 and closes.
+        smuggled = b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+        raw_req = (
+            b"GET /healthz HTTP/1.1\r\n"
+            b"Host: 127.0.0.1\r\n"
+            + f"Content-Length: {len(smuggled)}\r\n\r\n".encode("ascii")
+            + smuggled
+        )
+        with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
+            sock.sendall(raw_req)
+            chunks = []
+            while True:
+                data = sock.recv(4096)
+                if not data:
+                    break
+                chunks.append(data)
+        raw_resp = b"".join(chunks)
+        self.assertEqual(raw_resp.count(b"HTTP/1.1 "), 1)
+        self.assertTrue(raw_resp.startswith(b"HTTP/1.1 400"))
+
+        # 2. Export lock is released before streaming begins (slow reader does not hold the lock).
+        meta_dir = Path(self.app.queue.get(self.wid)["outputs"]["metadata"]).parent
+        lock_path = meta_dir.parent / ("." + meta_dir.name + ".lock")
+        with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
+            sock.sendall((
+                f"GET {drums_url} HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{port}\r\n"
+                f"Authorization: Bearer {TEST_TOKEN}\r\n\r\n"
+            ).encode("ascii"))
+            head = sock.recv(256)
+            self.assertTrue(head.startswith(b"HTTP/1.1 200"))
+            # Lock must be immediately acquirable even while the client has stopped reading.
+            with FileLock(str(lock_path), timeout=0):
+                pass
+
+        # 3. A mid-stream read error after headers does NOT inject an HTTP 404 response into the body.
+        real_stream = server.QueueStatusHandler._stream_open_file
+
+        class FailingReader:
+            def __init__(self, inner):
+                self._inner = inner
+                self._reads = 0
+
+            def fileno(self):
+                return self._inner.fileno()
+
+            def seek(self, offset):
+                return self._inner.seek(offset)
+
+            def read(self, size):
+                self._reads += 1
+                if self._reads > 1:
+                    raise OSError("simulated disk read failure")
+                return self._inner.read(size)
+
+            def close(self):
+                self._inner.close()
+
+        def wrap_stream(handler, file, *args, **kwargs):
+            return real_stream(handler, FailingReader(file), *args, **kwargs)
+
+        with patch.object(server.QueueStatusHandler, "_stream_open_file", wrap_stream):
+            with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
+                sock.sendall((
+                    f"GET {drums_url} HTTP/1.1\r\n"
+                    f"Host: 127.0.0.1:{port}\r\n"
+                    f"Authorization: Bearer {TEST_TOKEN}\r\n\r\n"
+                ).encode("ascii"))
+                chunks = []
+                while True:
+                    data = sock.recv(8192)
+                    if not data:
+                        break
+                    chunks.append(data)
+        partial = b"".join(chunks)
+        self.assertTrue(partial.startswith(b"HTTP/1.1 200"))
+        self.assertNotIn(b"HTTP/1.1 404", partial)
 
     def test_clear_and_rescan_exports_and_open_source_folder(self):
         def process(wid, args, **_kwargs):
@@ -822,12 +1076,14 @@ class HostTests(unittest.TestCase):
             state = Path(root)
             wav = state / "local.wav"
             wav.write_bytes(b"RIFF")
+            token_file = state / "remote.token"
+            token_file.write_text(REMOTE_TOKEN + "\n", encoding="utf-8")
             args = server.build_parser().parse_args([
                 "--host", "0.0.0.0", "--port", "0",
                 "--queue", str(state / "queue.json"),
                 "--state-dir", str(state),
                 "--output-dir", str(state / "output"),
-                "--server-token", "remote-token",
+                "--server-token-file", str(token_file),
             ])
             app = server.ItemServer(args)
             try:
@@ -835,3 +1091,15 @@ class HostTests(unittest.TestCase):
                     app.enqueue([str(wav)])
             finally:
                 app.stop()
+
+    def test_cli_token_flag_removed_and_short_tokens_rejected(self):
+        with self.assertRaises(SystemExit):
+            server.build_parser().parse_args(["--server-token", TEST_TOKEN])
+        with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {"JAMLY_SERVER_TOKEN": "a"}):
+            state = Path(root)
+            args = server.build_parser().parse_args([
+                "--port", "0", "--queue", str(state / "queue.json"),
+                "--state-dir", str(state), "--output-dir", str(state / "output"),
+            ])
+            with self.assertRaisesRegex(ValueError, "at least"):
+                server.ItemServer(args)

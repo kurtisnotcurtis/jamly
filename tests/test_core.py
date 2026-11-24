@@ -19,6 +19,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(command[-2:], ["--", "-abcdefghij"])
         self.assertEqual(command[command.index("--ffmpeg-location") + 1], "tools")
         self.assertEqual(command[command.index("-f") + 1], "bestaudio/best")
+        self.assertEqual(command[command.index("--max-filesize") + 1], str(core.MAX_MEDIA_BYTES))
         self.assertLess(command.index("-o"), command.index("--"))
 
     def test_encoder_uses_same_bitrate_for_each_output(self):
@@ -63,6 +64,13 @@ class ProcessTests(unittest.TestCase):
     def test_timeout_reaps_the_command(self):
         with self.assertRaises(TimeoutError):
             core.run([sys.executable, "-c", "import time;time.sleep(60)"], timeout=0.2)
+
+    def test_separate_stems_passes_timeout_to_runner(self):
+        with patch.object(core, "detect_engine", return_value="htdemucs"), \
+                patch.object(core, "run", return_value=core.RunResult([], 1, "", "boom")) as mocked:
+            with self.assertRaises(RuntimeError):
+                core.separate_stems("in.wav", "work", timeout=42)
+        self.assertEqual(mocked.call_args.kwargs["timeout"], 42)
 
 
 class FilenameTests(unittest.TestCase):

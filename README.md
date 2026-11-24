@@ -109,8 +109,9 @@ The companion works out of the box by pasting URLs or picking local files, but y
 
 1. In the companion UI, expand **Optional Chrome / Edge extension** and click **Prepare extension**.
 2. Open `chrome://extensions` (or `edge://extensions`), enable **Developer mode**, click **Load unpacked**, and select the displayed folder.
-3. Open the extension's **Pair / settings** page and paste the displayed backend URL (`http://127.0.0.1:8765`) and private pairing token.
-4. Click the Jamly toolbar icon on a YouTube video and select **Use current page** → **Split drums**.
+3. Open the extension's **Pair / settings** page, copy its extension origin (`chrome-extension://...`), and authorize it in the companion UI (or pass `--allow-origin` to `jamly-server`).
+4. Paste the backend URL (`http://127.0.0.1:8765`) and your pairing token (from the displayed `jamly-service token` command, or `server-token` in your state directory) into the extension's **Pair / settings** page.
+5. Click the Jamly toolbar icon on a YouTube video and select **Use current page** → **Split drums**.
 
 **CLI-only setup**: Run `jamly-server`, then run `jamly-service browser` (prints the unpacked extension folder) and `jamly-service token` (prints the pairing token).
 

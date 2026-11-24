@@ -104,6 +104,23 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(q.get("job1")["attempts"], 0)
         self.assertIsNone(q.get("job3"))
 
+    def test_queue_file_uses_private_permissions_and_restore_validates_types(self):
+        parent = Path(self._tmp()) / "private-state"
+        queue_path = parent / "queue.json"
+        q = WatchQueue(path=str(queue_path))
+        q.add("job1")
+        q.save()
+        if sys.platform != "win32":
+            self.assertEqual(queue_path.stat().st_mode & 0o077, 0)
+            self.assertEqual(parent.stat().st_mode & 0o077, 0)
+        with self.assertRaises(ValueError):
+            q.restore_export(
+                "job2",
+                source_url=123,
+                outputs={"drums": "/out/d.mp3"},
+                generation="gen-1",
+            )
+
 
 class AccessorsTests(unittest.TestCase):
     def _tmp(self):

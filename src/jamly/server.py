@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hmac
 from http.server import ThreadingHTTPServer
+import json
 import os
 from pathlib import Path
 import signal
@@ -15,8 +16,8 @@ from urllib.parse import quote, urlsplit
 from .companion_ui import CompanionUI
 from .config import (
     API_VERSION, add_pipeline_arguments, instance_path, job_arguments, pairing_token,
-    parse_configured_args, pipeline_options, runtime_paths, token_command,
-    validate_preferences, write_private_json,
+    parse_configured_args, pipeline_options, read_token_file, runtime_paths, token_command,
+    validate_allowed_origin, validate_extension_origin, validate_preferences, write_private_json,
 )
 from .http_handler import QueueStatusHandler, _is_loopback_host
 from .models import (
@@ -24,7 +25,7 @@ from .models import (
     model_choices, stem_choices, validate_audio_format, validate_model, validate_stem,
 )
 from .normalize import is_valid_stable_id, make_input
-from .outputs import audio_directory, read_manifest, resolve_output_path
+from .outputs import audio_directory, read_manifest, resolve_manifest_original, resolve_output_path
 from .run import ItemResult, process_one
 from .runtime import open_directory
 from .tray import create_tray
@@ -72,6 +73,21 @@ def _discover_manifest(meta_root: Path, meta_path: Path) -> dict | None:
     wid = manifest.get("watch_id") or rel_parts[0]
     if not is_valid_stable_id(wid):
         return None
+    raw_source = manifest.get("source_url")
+    if raw_source is not None:
+        if not isinstance(raw_source, str) or not raw_source.strip() or any(ord(c) < 32 for c in raw_source):
+            return None
+        source_url = raw_source.strip()
+    else:
+        source_url = wid
+    raw_title = manifest.get("title")
+    if raw_title is not None and not isinstance(raw_title, str):
+        return None
+    try:
+        model = validate_model(manifest.get("model", DEFAULT_MODEL))
+        stem = validate_stem(manifest.get("stem", DEFAULT_STEM), model)
+    except ValueError:
+        return None
     audio_format = manifest.get("format")
     if audio_format not in AUDIO_FORMATS:
         audio_format = meta_path.parent.name if meta_path.parent.name in AUDIO_FORMATS else DEFAULT_AUDIO_FORMAT
@@ -80,21 +96,15 @@ def _discover_manifest(meta_root: Path, meta_path: Path) -> dict | None:
         for kind, rec in manifest["outputs"].items()
     }
     outputs["metadata"] = str(meta_path)
-    original_path = None
-    recorded_orig = manifest.get("original")
-    if isinstance(recorded_orig, str) and recorded_orig.strip():
-        orig_candidate = Path(recorded_orig)
-        if not orig_candidate.is_absolute():
-            orig_candidate = audio_directory(meta_path.parent) / recorded_orig
-        if orig_candidate.is_file() and not orig_candidate.is_symlink():
-            original_path = str(orig_candidate)
+    resolved_original = resolve_manifest_original(meta_path.parent, manifest)
+    original_path = str(resolved_original) if resolved_original is not None else None
     return {
         "watch_id": wid,
-        "source_url": manifest.get("source_url") or wid,
+        "source_url": source_url,
         "original_path": original_path,
-        "title": manifest.get("title"),
-        "model": manifest.get("model", DEFAULT_MODEL),
-        "stem": manifest.get("stem", DEFAULT_STEM),
+        "title": raw_title,
+        "model": model,
+        "stem": stem,
         "audio_format": audio_format,
         "outputs": outputs,
         "generation": manifest["generation"],
@@ -103,12 +113,13 @@ def _discover_manifest(meta_root: Path, meta_path: Path) -> dict | None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Jamly local backend")
+    parser = argparse.ArgumentParser(description="Jamly local backend", allow_abbrev=False)
     add_pipeline_arguments(parser)
     parser.add_argument("--config", help="JSON configuration written by jamly-service")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=_port, default=8765)
-    parser.add_argument("--server-token", default=None, help="Override the saved pairing token")
+    parser.add_argument("--server-token-file", default=None,
+                        help="Read the pairing token from a file (or set JAMLY_SERVER_TOKEN)")
     parser.add_argument("--allow-origin", action="append", default=[],
                         help="Additional exact browser origin; never use '*'")
     parser.add_argument("--allow-host", action="append", default=[],
@@ -140,12 +151,12 @@ class _IPv6Server(_HTTPServer):
 class ItemServer:
     def __init__(self, args):
         self.args = args
-        explicit_token = args.server_token or os.environ.get("JAMLY_SERVER_TOKEN")
+        token_file = getattr(args, "server_token_file", None)
+        explicit_token = read_token_file(token_file) if token_file else os.environ.get("JAMLY_SERVER_TOKEN")
         args.host = args.host.strip()
         if not args.host or not _is_loopback_host(args.host) and not explicit_token:
-            raise ValueError("Non-loopback binds require an explicit --server-token")
-        if "*" in args.allow_origin:
-            raise ValueError("Use exact --allow-origin values, not '*'")
+            raise ValueError("Non-loopback binds require JAMLY_SERVER_TOKEN or --server-token-file")
+        self._allow_origins = [validate_allowed_origin(origin) for origin in args.allow_origin]
         self.state_dir, queue_path = runtime_paths(args)
         self.queue_path = str(queue_path)
         self._owner = queue_owner(self.queue_path)
@@ -167,6 +178,7 @@ class ItemServer:
             self._cancelled_ids = set()
             self._tray = None
             self._error = None
+            self._extension_origins = self._load_extension_origins()
             self.ui = CompanionUI(self.state_dir, enabled=_is_loopback_host(args.host))
             self._prune_orphaned_uploads()
             server_type = _IPv6Server if ":" in args.host else _HTTPServer
@@ -181,11 +193,121 @@ class ItemServer:
         host, port = self._server.server_address[:2]
         return "http://%s:%d" % ("[" + host + "]" if ":" in host else host, port)
 
+    def authorized_master(self, header: str) -> bool:
+        return _authorized(header, self._token)
+
     def authorized(self, header: str) -> bool:
-        return _authorized(header, self._token) or self.ui.authorize(header)
+        return self.authorized_master(header) or self.ui.authorize(header)
+
+    def _extension_origins_path(self) -> Path:
+        return self.state_dir / "extension-origins.json"
+
+    def _load_extension_origins(self) -> list[str]:
+        path = self._extension_origins_path()
+        if not path.is_file():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        raw = data.get("origins") if isinstance(data, dict) else None
+        if not isinstance(raw, list):
+            return []
+        origins: list[str] = []
+        for entry in raw:
+            try:
+                normalized = validate_extension_origin(entry)
+            except ValueError:
+                continue
+            if normalized not in origins:
+                origins.append(normalized)
+        return origins
+
+    def allowed_origins(self) -> set[str]:
+        with self._status_lock:
+            return set(self._allow_origins) | set(self._extension_origins)
+
+    def allowed_extension_origins(self) -> list[str]:
+        with self._status_lock:
+            return list(self._extension_origins)
+
+    def allow_extension_origin(self, origin: str) -> list[str]:
+        normalized = validate_extension_origin(origin)
+        with self._status_lock:
+            if self._stop.is_set():
+                raise QueueError("Server is shutting down")
+            if normalized not in self._extension_origins:
+                updated = [*self._extension_origins, normalized]
+                write_private_json(self._extension_origins_path(), {"origins": updated})
+                self._extension_origins = updated
+            return list(self._extension_origins)
 
     def _uploads_root(self) -> Path:
         return (self.state_dir / "uploads").resolve()
+
+    def _uploads_tmp_dir(self) -> Path:
+        return (self.state_dir / "uploads" / ".jamly-tmp").resolve()
+
+    def _uploads_ledger_path(self) -> Path:
+        return self.state_dir / "uploads-ledger.json"
+
+    @staticmethod
+    def _valid_ledger_relpath(rel: object) -> str | None:
+        if not isinstance(rel, str) or not rel:
+            return None
+        parts = Path(rel).parts
+        if len(parts) != 2 or any(part in ("", ".", "..") or part.startswith(".") for part in parts):
+            return None
+        return parts[0] + "/" + parts[1]
+
+    def _read_upload_ledger(self) -> set[str]:
+        path = self._uploads_ledger_path()
+        if not path.is_file():
+            return set()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return set()
+        raw = data.get("files") if isinstance(data, dict) else None
+        if not isinstance(raw, list):
+            return set()
+        entries = set()
+        for item in raw:
+            valid = self._valid_ledger_relpath(item)
+            if valid is not None:
+                entries.add(valid)
+        return entries
+
+    def _write_upload_ledger(self, entries: set[str]) -> None:
+        path = self._uploads_ledger_path()
+        if not entries and not path.exists():
+            return
+        write_private_json(path, {"files": sorted(entries)})
+
+    def _upload_relpath(self, path: Path) -> str | None:
+        uploads_root = self._uploads_root()
+        try:
+            rel = path.resolve().relative_to(uploads_root).as_posix()
+        except (OSError, ValueError):
+            return None
+        return self._valid_ledger_relpath(rel)
+
+    def is_managed_upload(self, path: Path) -> bool:
+        rel = self._upload_relpath(path)
+        if rel is None:
+            return False
+        with self._status_lock:
+            return rel in self._read_upload_ledger()
+
+    def register_upload(self, path: Path) -> None:
+        rel = self._upload_relpath(path)
+        if rel is None:
+            raise ValueError("Upload path must live inside managed uploads")
+        with self._status_lock:
+            ledger = self._read_upload_ledger()
+            if rel not in ledger:
+                ledger.add(rel)
+                self._write_upload_ledger(ledger)
 
     def _referenced_upload_paths(self) -> set[Path]:
         uploads_root = self._uploads_root()
@@ -203,39 +325,87 @@ class ItemServer:
         uploads_root = self._uploads_root()
         if not uploads_root.is_dir():
             return
+        ledger = self._read_upload_ledger()
+        if not ledger:
+            return
         referenced = self._referenced_upload_paths()
+        changed = False
         for raw in candidates:
             path = _upload_path(raw, uploads_root)
             if path is None or path in referenced:
                 continue
+            rel = self._upload_relpath(path)
+            if rel is None or rel not in ledger:
+                continue
             try:
-                path.unlink(missing_ok=True)
+                if not path.is_symlink():
+                    path.unlink(missing_ok=True)
                 parent = path.parent
                 if parent != uploads_root and parent.is_dir() and not any(parent.iterdir()):
                     parent.rmdir()
             except OSError:
                 pass
+            if not path.exists():
+                ledger.discard(rel)
+                changed = True
+        if changed:
+            try:
+                self._write_upload_ledger(ledger)
+            except OSError:
+                pass
 
     def _prune_orphaned_uploads(self) -> None:
         uploads_root = self._uploads_root()
-        if not uploads_root.is_dir():
-            return
-        referenced = self._referenced_upload_paths()
-        for entry in list(uploads_root.rglob("*")):
-            if not entry.is_file():
-                continue
+        tmp_dir = self._uploads_tmp_dir()
+        if tmp_dir.is_dir() and not tmp_dir.is_symlink():
+            for entry in list(tmp_dir.iterdir()):
+                if entry.is_file() and not entry.is_symlink() and entry.name.startswith(".jamly-upload-"):
+                    try:
+                        entry.unlink(missing_ok=True)
+                    except OSError:
+                        pass
             try:
-                if entry.name.startswith(".upload-") or entry.resolve() not in referenced:
-                    entry.unlink(missing_ok=True)
+                if not any(tmp_dir.iterdir()):
+                    tmp_dir.rmdir()
             except OSError:
                 pass
-        for entry in sorted(uploads_root.iterdir(), reverse=True):
-            if entry.is_dir():
-                try:
-                    if not any(entry.iterdir()):
-                        entry.rmdir()
-                except OSError:
-                    pass
+        if not uploads_root.is_dir():
+            return
+        ledger = self._read_upload_ledger()
+        if not ledger:
+            return
+        referenced = self._referenced_upload_paths()
+        changed = False
+        for rel in list(ledger):
+            candidate = uploads_root / rel
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                ledger.discard(rel)
+                changed = True
+                continue
+            if not resolved.is_relative_to(uploads_root):
+                ledger.discard(rel)
+                changed = True
+                continue
+            if resolved in referenced:
+                continue
+            try:
+                if candidate.is_file() and not candidate.is_symlink():
+                    candidate.unlink(missing_ok=True)
+                parent = candidate.parent
+                if parent != uploads_root and parent.is_dir() and not any(parent.iterdir()):
+                    parent.rmdir()
+            except OSError:
+                pass
+            if not candidate.exists():
+                ledger.discard(rel)
+                changed = True
+        if changed:
+            try:
+                self._write_upload_ledger(ledger)
+            except OSError:
+                pass
 
     def save_preferences(self, settings: dict) -> dict:
         settings = validate_preferences(settings)

@@ -17,6 +17,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  test:
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/ci.yml
+
   package:
     strategy:
       fail-fast: false
@@ -64,15 +68,9 @@ jobs:
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-pkgconf
       - run: uv sync --locked --group bundle --managed-python --python 3.12
-      - name: Use CPU-only PyTorch in the Linux companion bundle
+      - name: Use pinned CPU-only PyTorch in the Linux companion bundle
         if: runner.os == 'Linux'
-        run: |
-          TORCH_VERSION="$(uv run --no-sync python -c "import importlib.metadata; print(importlib.metadata.version('torch'))")"
-          NVIDIA_PKGS="$(uv run --no-sync python -c "import importlib.metadata as m; print(' '.join(sorted(d.metadata['Name'] for d in m.distributions() if d.metadata['Name'].startswith('nvidia-'))))")"
-          if [[ -n "${NVIDIA_PKGS}" ]]; then
-            uv pip uninstall ${NVIDIA_PKGS}
-          fi
-          uv pip install --no-deps --force-reinstall --index-url https://download.pytorch.org/whl/cpu "torch==${TORCH_VERSION}+cpu"
+        run: uv run --no-sync python tools/install_linux_cpu_torch.py
       - name: Verify lockstep version metadata
         run: |
           if [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then
@@ -80,7 +78,8 @@ jobs:
           else
             uv run --no-sync python tools/version.py --check
           fi
-      - name: Cache pinned native builds
+      - name: Cache pinned native builds (non-release builds only)
+        if: "!startsWith(github.ref, 'refs/tags/v')"
         id: native-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -89,15 +88,24 @@ jobs:
       - name: Build companion on macOS or Linux
         if: runner.os != 'Windows'
         run: |
+          REBUILD_FLAG=()
+          if [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then
+            REBUILD_FLAG=(--rebuild-native)
+          fi
           if [[ "${{ matrix.label }}" == "linux-x86_64" ]]; then
-            uv run --no-sync python tools/build_companion.py
+            uv run --no-sync python tools/build_companion.py "${REBUILD_FLAG[@]}"
           else
-            uv run --no-sync python tools/build_companion.py --skip-native-sources
+            uv run --no-sync python tools/build_companion.py --skip-native-sources "${REBUILD_FLAG[@]}"
           fi
       - name: Build companion on Windows
         if: runner.os == 'Windows'
         shell: msys2 {0}
-        run: uv run --no-sync python tools/build_companion.py --skip-native-sources
+        run: |
+          REBUILD_FLAG=()
+          if [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then
+            REBUILD_FLAG=(--rebuild-native)
+          fi
+          uv run --no-sync python tools/build_companion.py --skip-native-sources "${REBUILD_FLAG[@]}"
       - name: Relocate and exercise the packaged runtime
         run: uv run --no-sync python tools/bundle_smoke.py --real-models
       - name: Real Chrome using the packaged companion
@@ -105,7 +113,7 @@ jobs:
         timeout-minutes: 15
         run: node tools/browser_smoke.mjs --runtime dist/desktop/Jamly/jamly-runtime
       - name: Preserve completed native builds even if a later check fails
-        if: always() && !cancelled() && steps.native-cache.outputs.cache-hit != 'true' && hashFiles('build/native-audio/built.json') != ''
+        if: always() && !cancelled() && !startsWith(github.ref, 'refs/tags/v') && steps.native-cache.outputs.cache-hit != 'true' && hashFiles('build/native-audio/built.json') != ''
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: build/native-audio
@@ -129,7 +137,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: package
+    needs: [test, package]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -217,12 +225,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" dist/release/* --clobber
-          else
-            gh release create "${GITHUB_REF_NAME}" dist/release/* \
-              --title "Jamly ${GITHUB_REF_NAME}" \
-              --generate-notes
+            echo "Release ${GITHUB_REF_NAME} already exists; refusing to overwrite published release assets." >&2
+            exit 1
           fi
+          gh release create "${GITHUB_REF_NAME}" dist/release/* \
+            --title "Jamly ${GITHUB_REF_NAME}" \
+            --generate-notes
 
   publish-homebrew:
     if: startsWith(github.ref, 'refs/tags/v')

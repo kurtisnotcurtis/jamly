@@ -164,6 +164,35 @@ class DownloadSourceRetryTests(unittest.TestCase):
             self.assertEqual(archive.read_bytes(), PAYLOAD)
         self.assertEqual(self.urlopen.call_count, 0)
 
+    def test_downloaded_checksum_mismatch_raises_and_cleans_partial(self):
+        self.urlopen.side_effect = [FakeResponse(b"corrupted-payload")]
+        with tempfile.TemporaryDirectory() as root:
+            cache = Path(root)
+            with self.assertRaisesRegex(RuntimeError, "checksum mismatch"):
+                self._download(cache)
+            self.assertFalse((cache / ARCHIVE_NAME).exists())
+            self.assertFalse(list(cache.glob("*.partial")))
+
+    def test_cached_archive_checksum_mismatch_raises(self):
+        with tempfile.TemporaryDirectory() as root:
+            cache = Path(root)
+            (cache / ARCHIVE_NAME).write_bytes(b"tampered-cache")
+            with self.assertRaisesRegex(RuntimeError, "Cached source checksum mismatch"):
+                self._download(cache)
+        self.assertEqual(self.urlopen.call_count, 0)
+
+    def test_insecure_http_redirect_is_rejected_and_cleans_partial(self):
+        class InsecureResponse(io.BytesIO):
+            url = "http://example.com/openssl.tar.gz"
+
+        self.urlopen.side_effect = [InsecureResponse(PAYLOAD)]
+        with tempfile.TemporaryDirectory() as root:
+            cache = Path(root)
+            with self.assertRaisesRegex(RuntimeError, "insecure"):
+                self._download(cache)
+            self.assertFalse((cache / ARCHIVE_NAME).exists())
+            self.assertFalse(list(cache.glob("*.partial")))
+
 
 class VersionToolTests(unittest.TestCase):
     def test_repository_versions_are_in_lockstep(self):
@@ -457,6 +486,11 @@ class ReproDistAndDevCheckTests(unittest.TestCase):
             repro_dist._canonical_wheel(wheel)
             self.assertEqual(wheel.read_bytes(), first_whl)
             with zipfile.ZipFile(wheel) as zf:
+                import stat
+                for info in zf.infolist():
+                    mode = info.external_attr >> 16
+                    self.assertTrue(stat.S_ISREG(mode), f"{info.filename} missing S_IFREG: {oct(mode)}")
+                    self.assertEqual(mode & stat.S_IWGRP, 0, f"{info.filename} unexpectedly group-writable: {oct(mode)}")
                 meta = zf.read("jamly_audio_sep-0.2.5.dist-info/METADATA")
                 self.assertNotIn(b"\r\n", meta)
                 record = zf.read("jamly_audio_sep-0.2.5.dist-info/RECORD").decode("utf-8")
@@ -500,6 +534,62 @@ class ReproDistAndDevCheckTests(unittest.TestCase):
             payload = b"jamly-streamed-digest" * 100
             sample.write_bytes(payload)
             self.assertEqual(package_render.sha256_file(sample), hashlib.sha256(payload).hexdigest())
+
+    def test_release_section_opens_new_unreleased_above_dated_release(self):
+        import sys
+        tools_dir = str(Path(__file__).resolve().parents[1] / "tools")
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        release_tool = _load_tool("release.py")
+        sample = (
+            "# Changelog\n\n"
+            "## [Unreleased]\n\n"
+            "### Fixed\n"
+            "- Hardened startup.\n\n"
+            "## [0.2.6] - 2026-11-23\n\n"
+            "- Previous release.\n"
+        )
+        updated = release_tool._release_section(sample, "0.2.7")
+        unreleased_pos = updated.index("## [Unreleased]")
+        new_rel_pos = updated.index("## [0.2.7] - ")
+        old_rel_pos = updated.index("## [0.2.6] - ")
+        self.assertLess(unreleased_pos, new_rel_pos)
+        self.assertLess(new_rel_pos, old_rel_pos)
+        self.assertIn("- Hardened startup.", updated[new_rel_pos:old_rel_pos])
+
+    def test_linux_cpu_torch_pin_matches_uv_lock_and_verifies_hash_and_https(self):
+        import re
+        torch_installer = _load_tool("install_linux_cpu_torch.py")
+        pin = torch_installer.load_pin()
+        lock_text = (Path(__file__).resolve().parents[1] / "uv.lock").read_text(encoding="utf-8")
+        match = re.search(r'\[\[package\]\]\s+name = "torch"\s+version = "([^"]+)"', lock_text)
+        self.assertIsNotNone(match)
+        self.assertEqual(pin["version"], match.group(1))
+        self.assertEqual(len(pin["sha256"]), 64)
+
+        fake_wheel = b"fake-torch-wheel"
+        good_pin = {
+            "url": "https://download.pytorch.org/whl/cpu/torch-2.2.2%2Bcpu-cp312-cp312-linux_x86_64.whl",
+            "sha256": hashlib.sha256(fake_wheel).hexdigest(),
+        }
+
+        class GoodResp(io.BytesIO):
+            url = good_pin["url"]
+
+        class HttpResp(io.BytesIO):
+            url = "http://download.pytorch.org/whl/cpu/torch-2.2.2%2Bcpu-cp312-cp312-linux_x86_64.whl"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp)
+            with unittest.mock.patch.object(torch_installer, "urlopen", return_value=GoodResp(fake_wheel)):
+                whl = torch_installer.download_verified_wheel(good_pin, dest)
+                self.assertEqual(whl.read_bytes(), fake_wheel)
+            with unittest.mock.patch.object(torch_installer, "urlopen", return_value=GoodResp(b"wrong-bytes")):
+                with self.assertRaisesRegex(RuntimeError, "SHA-256 mismatch"):
+                    torch_installer.download_verified_wheel(good_pin, dest / "bad")
+            with unittest.mock.patch.object(torch_installer, "urlopen", return_value=HttpResp(fake_wheel)):
+                with self.assertRaisesRegex(RuntimeError, "insecure"):
+                    torch_installer.download_verified_wheel(good_pin, dest / "http")
 
 
 if __name__ == "__main__":

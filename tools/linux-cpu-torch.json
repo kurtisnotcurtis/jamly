@@ -1,0 +1,8 @@
+{
+  "version": "2.2.2",
+  "wheel_version": "2.2.2+cpu",
+  "python_tag": "cp312",
+  "platform_tag": "linux_x86_64",
+  "url": "https://download.pytorch.org/whl/cpu/torch-2.2.2%2Bcpu-cp312-cp312-linux_x86_64.whl",
+  "sha256": "431a747b5a880cf8e1fb6d58db6bfafa6768cbec76517d046854537c03323edf"
+}
