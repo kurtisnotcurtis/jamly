@@ -4,6 +4,10 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.4.0] - 2026-11-24
+
 ### Changed
 - **Unified single-command CLI (`jamly`).** Replaced the five separate console scripts (`jamly`, `jamly-companion`, `jamly-server`, `jamly-doctor`, `jamly-service`) and desktop bundle flag aliases (`--cli`, `--doctor`, `--service`) with one `jamly` entrypoint dispatching `companion` (default when invoked with no arguments), `split`, `server`, `doctor`, and `service` identically across PyPI, Homebrew, WinGet, AUR, and portable bundles; `jamly split` also accepts positional inputs alongside `-i` (`src/jamly/cli.py`, `src/jamly/run.py`, `pyproject.toml`, `tools/desktop_entry.py`, `packaging/`).
 - **Loopback-only backend.** Restricted `jamly server` to loopback addresses (`127.0.0.1`, `localhost`, `::1`), removing `--allow-host` and non-loopback code paths (`src/jamly/server.py`, `src/jamly/http_handler.py`, `src/jamly/companion.py`, `src/jamly/companion_ui.py`, `src/jamly/tray.py`).
