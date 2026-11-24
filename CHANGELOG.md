@@ -4,6 +4,10 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.2.6] - 2026-11-23
+
 ### Fixed
 - **Prevent arbitrary file reads and HTTP proxying through `/source/<id>`.** Reject non-audio local paths in input normalization, reject local file paths on non-loopback binds, remove the HTTP proxy branch from `/source/<id>`, and serve only verified `original_path` files recorded on completed jobs (`src/jamly/normalize.py`, `src/jamly/server.py`, `src/jamly/run.py`).
 - **Keep canonical `source_url` intact across completions and retries.** Store the retained original audio path in a dedicated `original_path` job field (and restore it during export rescanning from `manifest["original"]`), so URL retries reprocess the original URL instead of the retained local copy (`src/jamly/watch_queue.py`, `src/jamly/server.py`, `src/jamly/run.py`, `src/jamly/web/app.js`).
@@ -18,6 +22,7 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 - **Cancel/re-upload edge cases, streaming release hashes, and browser polish.** Ensure user-cancelled jobs are recorded as `cancelled` even when the worker reports a failure, reuse identical content-addressed upload files instead of replacing an open file on Windows, stream release SHA-256 digests in chunks, keep the docs site copy-button label stable on rapid clicks, omit `Content-Type` on userscript `GET` requests, and align `PROCESSING-PIPELINE.md` and `README.md` with float64 stem summation and manifest publish order (`src/jamly/server.py`, `src/jamly/http_handler.py`, `tools/package_render.py`, `.github/workflows/companions.yml`, `site/script.js`, `browser/userscripts/jamly.user.js`, `PROCESSING-PIPELINE.md`, `README.md`).
 
 ### Changed
+- **Two-row companion player layout.** Move the active track title/subtitle, stem toggles, and close button into a header row above the audio transport and widened speed slider, giving both the scrubber and speed bar significantly more room (`src/jamly/web/index.html`, `src/jamly/web/app.css`).
 - **Simplification, modularization, queue performance, and CI hardening.** Split `QueueStatusHandler` into `src/jamly/http_handler.py` with a route table, unified `_media_type()` header parsing, and Range-capable file streaming; unified `audio.mix_pair`, centralized audio format, stable-ID, and local-extension validation, decomposed high-complexity helpers across `run.py`, `audio.py`, `normalize.py`, `config.py`, `watch_queue.py`, `http_handler.py`, `server.py`, and `core.py`, and centralized `API_VERSION`; made `WatchQueue` copy-on-write and removed legacy residue (`done` list writes, `mark_done`/`is_complete`/`count_pending`/`default_queue_path`/`normalize_inputs`, `ItemResult.drums_path`/`nodrums_path`, `/items`, `ac_server*`, unreachable preference branch, unused `WatchQueue.PENDING`/`DONE`); shared model/stem selection helpers between the companion UI and popup; imported `jamly.__version__` and `sndfile_library` in `tools/Jamly.spec`; made `tools/dev-check.py` fail fast, dropped duplicate `unittest` runs, invoked it directly from `ci.yml`, pinned all GitHub Actions to commit SHAs, and checksum-pinned `wingetcreate.exe`.
 
 ## [0.2.5] - 2026-11-22
