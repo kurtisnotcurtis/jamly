@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jamly-audio-sep"
-version = "0.4.0"
+version = "0.4.1"
 description = "Split media URLs or local audio into drums/drumless, karaoke, or multi-stem tracks locally with Demucs."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"

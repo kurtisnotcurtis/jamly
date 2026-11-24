@@ -4,6 +4,10 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.4.1] - 2026-11-24
+
 ### Fixed
 - **Bundle `sympy` and `mpmath` for Apple Silicon MPS separation.** Removed `sympy` and `mpmath` from PyInstaller `excludes` in `tools/Jamly.spec` so PyTorch's macOS MPS `group_norm` path (`torch._refs` → `symbolic_shapes`) works in the standalone companion app (`tools/Jamly.spec`, `tests/test_native_audio.py`).
 
