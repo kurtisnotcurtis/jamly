@@ -35,6 +35,8 @@ jobs:
           - os: macos-15-intel
             label: macos-x86_64
     runs-on: ${{ matrix.os }}
+    env:
+      UV_CACHE_DIR: ${{ runner.temp }}/uv-cache
     defaults:
       run:
         shell: bash
@@ -44,19 +46,34 @@ jobs:
         with:
           version: "0.11.7"
           python-version: "3.12"
-          enable-cache: true
+          enable-cache: false
+      - name: Restore uv cache (with prefix fallback across lockfile bumps)
+        id: uv-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: uv-bundle-${{ matrix.label }}-3.12-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-bundle-${{ matrix.label }}-3.12-
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         if: runner.os == 'Linux'
         with:
           node-version: "24"
+      - name: Cache pinned native builds (non-release builds only)
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        id: native-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: build/native-audio
+          key: native-audio-${{ matrix.label }}-${{ hashFiles('tools/native_audio.py', 'tools/native-sources.json') }}
       - name: Install native build tools on Linux
-        if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y build-essential pkg-config perl
+        if: runner.os == 'Linux' && steps.native-cache.outputs.cache-hit != 'true'
+        run: sudo apt-get update -qq && sudo apt-get install -y build-essential pkg-config perl pigz
       - name: Install native build tools on macOS
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.native-cache.outputs.cache-hit != 'true'
         run: command -v pkg-config || brew install pkg-config
       - name: Install native build tools on Windows
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && steps.native-cache.outputs.cache-hit != 'true'
         uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e
         with:
           msystem: MINGW64
@@ -67,7 +84,8 @@ jobs:
             perl-locale-maketext-simple
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-pkgconf
-      - run: uv sync --locked --group bundle --managed-python --python 3.12
+      - id: uv-sync
+        run: uv sync --locked --no-dev --group bundle --managed-python --python 3.12
       - name: Use pinned CPU-only PyTorch in the Linux companion bundle
         if: runner.os == 'Linux'
         run: uv run --no-sync python tools/install_linux_cpu_torch.py
@@ -78,13 +96,22 @@ jobs:
           else
             uv run --no-sync python tools/version.py --check
           fi
-      - name: Cache pinned native builds (non-release builds only)
+      - name: Cache Python runtime notices (non-release builds only)
         if: "!startsWith(github.ref, 'refs/tags/v')"
-        id: native-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          path: build/native-audio
-          key: native-audio-${{ matrix.label }}-${{ hashFiles('tools/native_audio.py', 'tools/native-sources.json') }}
+          path: build/python-notices
+          key: python-notices-${{ matrix.label }}-3.12-${{ hashFiles('tools/build_companion.py') }}
+          restore-keys: |
+            python-notices-${{ matrix.label }}-3.12-
+      - name: Cache Demucs smoke-test checkpoints (non-release builds only)
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cache/torch/hub/checkpoints
+            ~/.cache/huggingface/hub
+          key: demucs-smoke-models-${{ runner.os }}-v1
       - name: Build companion on macOS or Linux
         if: runner.os != 'Windows'
         run: |
@@ -97,8 +124,8 @@ jobs:
           else
             uv run --no-sync python tools/build_companion.py --skip-native-sources "${REBUILD_FLAG[@]}"
           fi
-      - name: Build companion on Windows
-        if: runner.os == 'Windows'
+      - name: Build companion on Windows (compile native tools)
+        if: runner.os == 'Windows' && steps.native-cache.outputs.cache-hit != 'true'
         shell: msys2 {0}
         run: |
           REBUILD_FLAG=()
@@ -106,6 +133,9 @@ jobs:
             REBUILD_FLAG=(--rebuild-native)
           fi
           uv run --no-sync python tools/build_companion.py --skip-native-sources "${REBUILD_FLAG[@]}"
+      - name: Build companion on Windows (reuse cached native tools)
+        if: runner.os == 'Windows' && steps.native-cache.outputs.cache-hit == 'true'
+        run: uv run --no-sync python tools/build_companion.py --skip-native-sources
       - name: Relocate and exercise the packaged runtime
         run: uv run --no-sync python tools/bundle_smoke.py --real-models
       - name: Real Chrome using the packaged companion
@@ -118,6 +148,15 @@ jobs:
         with:
           path: build/native-audio
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
+      - name: Prune uv cache before saving
+        if: always() && !cancelled() && steps.uv-sync.outcome == 'success' && steps.uv-cache.outputs.cache-hit != 'true'
+        run: uv cache prune --ci
+      - name: Save uv cache
+        if: always() && !cancelled() && steps.uv-sync.outcome == 'success' && steps.uv-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: ${{ steps.uv-cache.outputs.cache-primary-key }}
       - name: Upload unsigned preview and corresponding sources
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

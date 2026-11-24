@@ -552,6 +552,13 @@ class QueueStatusHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed_url = urlsplit(self.path)
         path = parsed_url.path
+        if path == "/handshake":
+            if self._reject_unexpected_body():
+                return
+            if not self._allowed_request(auth=False):
+                return
+            self._get_handshake(parsed_url)
+            return
         if path == "/app/session":
             self._companion_session()
             return

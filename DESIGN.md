@@ -156,7 +156,9 @@ Windows uses a per-user logon task, macOS a LaunchAgent, and Linux a user system
 are included in the wheel and can be copied to a stable directory for unpacked loading.
 
 Development and CI use `uv.lock`. Fast tests exercise error/recovery contracts without downloading a
-model; explicit integration checks exercise the installed pipeline and Chrome with generated audio.
+model; a Playwright E2E suite (`tests/e2e/`) exercises the companion web UI and unpacked extension
+against a deterministic local server; and explicit integration checks exercise the installed pipeline
+and Chrome with generated audio.
 
 ## Desktop packages
 
@@ -166,7 +168,9 @@ treating the GUI executable as a Python interpreter. The GUI launcher and worker
 onedir runtime; there is no onefile extraction or source-checkout dependency at launch.
 
 `tools/native_audio.py` builds ffmpeg, ffprobe and a minimal shared libsndfile from checksum-pinned
-sources. FFmpeg links the pinned LAME and OpenSSL statically, with GPL/nonfree features disabled.
+sources (overlapping independent OpenSSL/LAME/libsndfile builds, restricting FFmpeg to the audio and
+cover-art codecs/filters/bitstream filters Jamly uses, and pruning intermediate build trees before
+caching). FFmpeg links the pinned LAME and OpenSSL statically, with GPL/nonfree features disabled.
 The source-built libsndfile replaces the soundfile wheel's opaque codec bundle and handles PCM;
 encoded input decoding uses Demucs' sphn/FFmpeg path, and MP3 output uses FFmpeg. Corresponding sources,
 build instructions, native configuration, package notices and checksums accompany the desktop artifacts.

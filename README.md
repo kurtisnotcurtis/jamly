@@ -221,10 +221,12 @@ uv sync --locked
 python tools/dev-check.py            # run the whole CI suite locally before pushing
 ```
 
-`tools/dev-check.py` is the single runner used both locally and in `.github/workflows/ci.yml` (lockstep version check, `jamly-doctor`, pytest, ruff, Node extension tests, and a fresh-install wheel smoke) and fails fast on the first broken stage. Opt into the heavier real-model checks:
+`tools/dev-check.py` is the single runner used both locally and in `.github/workflows/ci.yml` (lockstep version check, `jamly-doctor`, pytest, ruff, Node extension tests, and a fresh-install wheel smoke) and fails fast on the first broken stage. Opt into the browser E2E or real-model checks:
 
 ```sh
-python tools/dev-check.py --integration    # real Demucs pipeline on synthesized WAV
+npm ci --prefix tests/e2e                   # one-time install for Playwright E2E tests
+python tools/dev-check.py --e2e             # fast Playwright companion + extension E2E (~15s)
+python tools/dev-check.py --integration     # real Demucs pipeline on synthesized WAV
 python tools/dev-check.py --browser         # headless-Chrome companion workflow (~15 min)
 ```
 

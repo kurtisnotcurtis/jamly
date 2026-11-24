@@ -201,9 +201,10 @@ class ServerTests(unittest.TestCase):
             code, _, _ = self.request("POST", "/add", {"inputs": [self.source]}, headers=headers)
             self.assertEqual(code, 403)
         # Unpaired extension origins must not receive a /handshake proof either.
-        code, _, _ = self.request("GET", "/handshake?nonce=" + nonce, auth=False,
-                                  headers={"Origin": TEST_EXT_ORIGIN})
-        self.assertEqual(code, 403)
+        for method in ("GET", "POST"):
+            code, _, _ = self.request(method, "/handshake?nonce=" + nonce, b"" if method == "POST" else None,
+                                      auth=False, headers={"Origin": TEST_EXT_ORIGIN})
+            self.assertEqual(code, 403)
         self.assertEqual(self.app.queue.items, [])
 
     def test_extension_preflight_and_handshake_require_explicit_allowed_origin(self):
@@ -214,6 +215,9 @@ class ServerTests(unittest.TestCase):
             "Origin": TEST_EXT_ORIGIN,
             "Access-Control-Request-Method": "POST",
             "Access-Control-Request-Headers": "authorization,content-type",
+        })[0], 403)
+        self.assertEqual(self.request("POST", "/handshake?nonce=" + nonce, b"", auth=False, headers={
+            "Origin": TEST_EXT_ORIGIN,
         })[0], 403)
         # Authorizing the exact extension origin via /app/extension enables preflight and handshake.
         code, setup, _ = self.request("POST", "/app/extension", {"allow_origin": TEST_EXT_ORIGIN})
@@ -227,13 +231,19 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(code, 204)
         self.assertEqual(headers["Access-Control-Allow-Origin"], TEST_EXT_ORIGIN)
         self.assertIn("Authorization", headers["Access-Control-Allow-Headers"])
-        hs_code, hs_body, _ = self.request("GET", "/handshake?nonce=" + nonce, auth=False,
-                                           headers={"Origin": TEST_EXT_ORIGIN})
-        self.assertEqual(hs_code, 200)
         expected_proof = config.client_pairing_proof(
             TEST_TOKEN, nonce, self.app._server.server_address[1]
         )
-        self.assertEqual(hs_body["client_proof"], expected_proof)
+        for method in ("GET", "POST"):
+            hs_code, hs_body, _ = self.request(method, "/handshake?nonce=" + nonce,
+                                               b"" if method == "POST" else None,
+                                               auth=False, headers={"Origin": TEST_EXT_ORIGIN})
+            self.assertEqual(hs_code, 200)
+            self.assertEqual(hs_body["client_proof"], expected_proof)
+        # POST /handshake rejects request bodies just like GET.
+        bad_code, _, _ = self.request("POST", "/handshake?nonce=" + nonce, {"unexpected": True},
+                                      auth=False, headers={"Origin": TEST_EXT_ORIGIN})
+        self.assertEqual(bad_code, 400)
 
     def test_invalid_payloads_return_client_errors(self):
         self.start()

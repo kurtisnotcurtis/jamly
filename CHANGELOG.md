@@ -4,7 +4,14 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **Playwright E2E tests and extension options unit tests.** Added a fast deterministic Playwright E2E suite (`tests/e2e/companion.e2e.test.mjs`, `tests/e2e/mock_server.py`) covering launch-file pairing, settings persistence, error/retry, live progress/cancel, local uploads, multi-preset practice player playback and stem switching, search/status/model filters, export folder/clear/rescan actions, manual pairing, clean shutdown, and unpacked browser extension pairing/origin enforcement/popup submission; added unit tests for `jamly_options.js` (`browser/extension/jamly_options_test.js`); and wired both into `tools/dev-check.py` (`--e2e`) and `.github/workflows/ci.yml`.
+
+### Changed
+- **Faster Companion package CI builds.** Restricted bundled FFmpeg builds to required audio/cover-art components and OpenSSL builds to static libraries (`build_libs` / `install_dev` with `no-apps no-docs no-legacy`), parallelized independent native dependency downloads and builds using all available CPU cores, pruned intermediate native build trees before caching, switched Linux companion archiving to `pigz -6` / `gzip -6`, excluded unused PyTorch compiler/dev packages in `tools/Jamly.spec`, added prefix fallback caching for `uv` (avoiding `sphn` rebuilds across lockfile bumps on Intel macOS), skipped native toolchain installs on cache hits, and cached Python notices and smoke-test checkpoints on non-release builds (`tools/native_audio.py`, `tools/build_companion.py`, `tools/Jamly.spec`, `.github/workflows/companions.yml`).
+
+### Fixed
+- **Enforce extension origin authorization during pairing and status checks.** Added `POST /handshake` support and switched `jamlyClient.verifyBackend` to `POST /handshake` so Chromium/Edge always sends the `Origin` header even when the extension holds `host_permissions`, rejecting unauthorized extension origins at pairing time before any token is sent (`src/jamly/http_handler.py`, `browser/extension/jamly_client.js`, `src/jamly/web/jamly_client.js`).
 
 ## [0.3.0] - 2026-11-23
 

@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
-import time
 from pathlib import Path
 import platform
 import shlex
@@ -13,9 +13,11 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import threading
+import time
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import urlopen
-from urllib.error import HTTPError, URLError
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES_FILE = Path(__file__).with_name("native-sources.json")
@@ -95,7 +97,54 @@ def download_source(name: str, cache: Path) -> Path:
     return archive
 
 
-def build(work: Path, jobs: int = 4, *, rebuild: bool = False) -> Path:
+def default_jobs() -> int:
+    return max(1, os.cpu_count() or 4)
+
+
+# Jamly only decodes audio (plus embedded cover art), resamples, measures peaks, and encodes
+# MP3/PCM. Restricting FFmpeg to those components cuts native build time substantially.
+FFMPEG_ENCODERS = (
+    "libmp3lame", "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_f64le",
+    "aac", "flac", "alac", "opus", "vorbis", "wrapped_avframe", "mjpeg", "png",
+)
+FFMPEG_DECODERS = (
+    "mp1*", "mp2*", "mp3*", "aac*", "opus", "vorbis", "flac", "alac", "pcm_*",
+    "wmav1", "wmav2", "wmapro", "wmalossless", "wmavoice", "ac3*", "eac3*", "dca",
+    "amrnb", "amrwb", "adpcm_*", "ape", "tta", "wavpack", "tak", "mlp", "truehd",
+    "dsd_*", "gsm*", "speex", "mpc7", "mpc8", "shorten", "atrac*", "cook",
+    "real_144", "real_288", "mjpeg", "png",
+)
+FFMPEG_FILTERS = (
+    "abuffer", "abuffersink", "acopy", "aformat", "anull", "anullsink", "aresample",
+    "astats", "atrim", "channelmap", "pan", "volume", "buffer", "buffersink",
+    "format", "null", "scale", "copy",
+)
+FFMPEG_BSFS = ("aac_adtstoasc", "extract_extradata", "null", "opus_metadata", "pcm_rechunk")
+
+
+def ffmpeg_component_flags() -> list[str]:
+    return [
+        "--disable-avdevice", "--disable-hwaccels", "--disable-indevs", "--disable-outdevs",
+        "--disable-encoders", "--enable-encoder=" + ",".join(FFMPEG_ENCODERS),
+        "--disable-decoders", "--enable-decoder=" + ",".join(FFMPEG_DECODERS),
+        "--disable-filters", "--enable-filter=" + ",".join(FFMPEG_FILTERS),
+        "--disable-bsfs", "--enable-bsf=" + ",".join(FFMPEG_BSFS),
+    ]
+
+
+def _prune_build_tree(work: Path, prefix: Path) -> None:
+    """Remove intermediate C build trees and static archives so caches stay compact."""
+    for directory in (work / "source", prefix / "include", prefix / "share", prefix / "lib" / "pkgconfig"):
+        if directory.exists():
+            shutil.rmtree(directory)
+    lib_dir = prefix / "lib"
+    if lib_dir.is_dir():
+        for artifact in list(lib_dir.glob("*.a")) + list(lib_dir.glob("*.la")):
+            artifact.unlink(missing_ok=True)
+
+
+def build(work: Path, jobs: int | None = None, *, rebuild: bool = False) -> Path:
+    jobs = default_jobs() if jobs is None else max(1, jobs)
     work = work.resolve()
     marker = work / ".jamly-native-build"
     if work.exists() and any(work.iterdir()) and not marker.exists():
@@ -129,10 +178,13 @@ def build(work: Path, jobs: int = 4, *, rebuild: bool = False) -> Path:
     shell = os.environ.get("JAMLY_BUILD_SHELL") or shutil.which("bash")
     if not shell:
         raise RuntimeError("Building desktop audio tools requires Bash and a C build toolchain")
-    environment = dict(os.environ)
+    base_env = dict(os.environ)
     if sys.platform == "darwin":
-        environment["MACOSX_DEPLOYMENT_TARGET"] = "13.0"
+        base_env["MACOSX_DEPLOYMENT_TARGET"] = "13.0"
     log_path = work / "build.log"
+    log_path.write_text("", encoding="utf-8")
+    log_lock = threading.Lock()
+    install_lock = threading.Lock()
 
     def posix(path: Path) -> str:
         if os.name != "nt":
@@ -142,16 +194,20 @@ def build(work: Path, jobs: int = 4, *, rebuild: bool = False) -> Path:
             text=True,
         ).strip()
 
-    def execute(command: list[str], cwd: Path):
-        with log_path.open("a", encoding="utf-8") as log:
-            log.write("\n" + shlex.join(command) + "\n")
-            log.flush()
-            result = subprocess.run(
-                [shell, "--noprofile", "--norc", "-c", shlex.join(command)],
-                cwd=cwd, env=environment, stdout=log, stderr=subprocess.STDOUT,
-            )
+    def execute(command: list[str], cwd: Path, *, env: dict[str, str]):
+        result = subprocess.run(
+            [shell, "--noprofile", "--norc", "-c", shlex.join(command)],
+            cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+        )
+        with log_lock:
+            with log_path.open("a", encoding="utf-8") as log:
+                log.write("\n" + shlex.join(command) + "\n")
+                if result.stdout:
+                    log.write(result.stdout)
+                log.flush()
         if result.returncode:
-            tail = "\n".join(log_path.read_text(errors="replace").splitlines()[-60:])
+            tail = "\n".join((result.stdout or "").splitlines()[-60:])
             raise RuntimeError("Native build failed; see %s\n%s" % (log_path, tail))
 
     for generated in (prefix, work / "source"):
@@ -159,61 +215,97 @@ def build(work: Path, jobs: int = 4, *, rebuild: bool = False) -> Path:
             shutil.rmtree(generated)
     source = work / "source"
     source.mkdir()
-    for name in ("openssl", "lame", "ffmpeg", "libsndfile"):
+
+    def fetch_and_extract(name: str) -> None:
         archive = download_source(name, work / "downloads")
         with tarfile.open(archive) as file:
             file.extractall(source, filter="data")
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for future in [pool.submit(fetch_and_extract, name) for name in ("openssl", "lame", "ffmpeg", "libsndfile")]:
+            future.result()
+
     root = posix(prefix)
-    environment["PKG_CONFIG_PATH"] = root + "/lib/pkgconfig"
-    environment["CFLAGS"] = "-O2 -fPIC"
+    base_env["PKG_CONFIG_PATH"] = root + "/lib/pkgconfig"
+    base_env["CFLAGS"] = "-O2 -fPIC"
     openssl_target, host = targets[platform_key]
-    parallel = "-j%d" % max(1, jobs)
+    parallel = "-j%d" % jobs
+    side_parallel = "-j%d" % max(1, jobs // 2)
+
+    def build_openssl() -> None:
+        env = dict(base_env)
+        directory = source / SOURCES["openssl"]["directory"]
+        execute(["perl", "Configure", openssl_target, "no-shared", "no-tests", "no-module",
+                 "no-apps", "no-docs", "no-legacy", "--prefix=" + root, "--libdir=lib"],
+                directory, env=env)
+        execute(["make", parallel, "build_libs"], directory, env=env)
+        with install_lock:
+            execute(["make", "install_dev"], directory, env=env)
+
+    def build_lame() -> None:
+        env = dict(base_env)
+        directory = source / SOURCES["lame"]["directory"]
+        execute(["./configure", "--prefix=" + root, "--build=" + host, "--host=" + host,
+                 "--disable-shared", "--enable-static", "--disable-frontend"],
+                directory, env=env)
+        execute(["make", side_parallel], directory, env=env)
+        with install_lock:
+            execute(["make", "install"], directory, env=env)
+
+    def build_libsndfile() -> None:
+        env = dict(base_env)
+        if os.name == "nt":
+            env["CFLAGS"] += " -std=gnu11"
+        directory = source / SOURCES["libsndfile"]["directory"]
+        execute(["./configure", "--prefix=" + root, "--build=" + host, "--host=" + host,
+                 "--disable-static", "--enable-shared", "--disable-external-libs",
+                 "--disable-mpeg", "--disable-alsa", "--disable-sqlite", "--disable-full-suite"],
+                directory, env=env)
+        execute(["make", side_parallel], directory, env=env)
+        with install_lock:
+            execute(["make", "install"], directory, env=env)
+
+    def build_ffmpeg() -> None:
+        env = dict(base_env)
+        directory = source / SOURCES["ffmpeg"]["directory"]
+        flags = [
+            "./configure", "--prefix=" + root, "--disable-autodetect", "--disable-shared",
+            "--enable-static", "--disable-doc", "--disable-debug", "--disable-ffplay",
+            "--disable-x86asm", "--enable-libmp3lame", "--enable-openssl", "--enable-version3",
+            "--pkg-config-flags=--static", "--extra-cflags=-I" + root + "/include",
+            "--extra-ldflags=-L" + root + "/lib", *ffmpeg_component_flags(),
+        ]
+        if os.name == "nt":
+            flags.extend(("--target-os=mingw32", "--arch=x86_64", "--disable-pthreads", "--enable-w32threads"))
+        execute(flags, directory, env=env)
+        execute(["make", parallel], directory, env=env)
+        with install_lock:
+            execute(["make", "install"], directory, env=env)
 
     print("Building pinned audio dependencies for " + platform_key, flush=True)
-    directory = source / SOURCES["openssl"]["directory"]
-    execute(["perl", "Configure", openssl_target, "no-shared", "no-tests", "no-module",
-             "--prefix=" + root, "--libdir=lib",], directory)
-    execute(["make", parallel], directory)
-    execute(["make", "install_sw"], directory)
+    # OpenSSL, LAME, and libsndfile are independent; overlapping their configure/compile phases
+    # avoids leaving cores idle, especially during single-threaded MSYS2 configure scripts.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        f_openssl = pool.submit(build_openssl)
+        f_lame = pool.submit(build_lame)
+        f_sndfile = pool.submit(build_libsndfile)
+        f_openssl.result()
+        f_lame.result()
+        build_ffmpeg()
+        f_sndfile.result()
 
-    directory = source / SOURCES["lame"]["directory"]
-    execute(["./configure", "--prefix=" + root, "--build=" + host, "--host=" + host,
-             "--disable-shared", "--enable-static", "--disable-frontend"], directory)
-    execute(["make", parallel], directory)
-    execute(["make", "install"], directory)
-
-    directory = source / SOURCES["ffmpeg"]["directory"]
-    flags = [
-        "./configure", "--prefix=" + root, "--disable-autodetect", "--disable-shared",
-        "--enable-static", "--disable-doc", "--disable-debug", "--disable-ffplay",
-        "--disable-x86asm", "--enable-libmp3lame", "--enable-openssl", "--enable-version3",
-        "--pkg-config-flags=--static", "--extra-cflags=-I" + root + "/include",
-        "--extra-ldflags=-L" + root + "/lib",
-    ]
-    if os.name == "nt":
-        flags.extend(("--target-os=mingw32", "--arch=x86_64", "--disable-pthreads", "--enable-w32threads"))
-    execute(flags, directory)
-    execute(["make", parallel], directory)
-    execute(["make", "install"], directory)
-    directory = source / SOURCES["libsndfile"]["directory"]
-    if os.name == "nt":
-        environment["CFLAGS"] += " -std=gnu11"
-    execute(["./configure", "--prefix=" + root, "--build=" + host, "--host=" + host,
-             "--disable-static", "--enable-shared", "--disable-external-libs",
-             "--disable-mpeg", "--disable-alsa", "--disable-sqlite", "--disable-full-suite"], directory)
-    execute(["make", parallel], directory)
-    execute(["make", "install"], directory)
     for binary in executables:
         subprocess.run([str(binary), "-version"], check=True, stdout=subprocess.DEVNULL)
     stamp.write_text(json.dumps({
         "inputs": identity, "binaries": {path.name: checksum(path) for path in binaries},
     }, indent=2))
+    _prune_build_tree(work, prefix)
     return prefix
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work-dir", type=Path, default=ROOT / "build" / "native-audio")
-    parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument("--jobs", type=int, default=default_jobs())
     options = parser.parse_args()
     print(build(options.work_dir, options.jobs))
