@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Jamly - Local Drum &amp; Drumless Stem Exporter</title>
-  <meta name="description" content="Create sample-aligned drums and drumless practice tracks from media URLs or local audio files. Runs locally on your hardware with Demucs v4.">
+  <meta name="description" content="Create sample-aligned drums and drumless practice tracks from media URLs or local audio files. Runs locally on your hardware.">
   <link rel="icon" href="jamly-mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
   <script defer src="script.js"></script>
@@ -43,7 +43,7 @@
           </div>
           <p class="lead">
             Turn individual media URLs or local audio files into sample-aligned
-            <strong>drums</strong> and <strong>no_drums</strong> stems using Demucs v4.
+            <strong>drums</strong> and <strong>no_drums</strong> stems right on your machine.
             No cloud subscriptions, no upload limits, and no per-stem normalization drift.
           </p>
           <div class="hero-actions">
@@ -52,7 +52,7 @@
           </div>
           <ul class="hero-badges" aria-label="Key capabilities">
             <li>URLs + Local Audio Files</li>
-            <li>3 Curated Demucs Presets</li>
+            <li>3 Separation Presets</li>
             <li>320k MP3 &amp; Float32 WAV</li>
             <li>macOS · Windows · Linux</li>
           </ul>
@@ -96,7 +96,7 @@
       <div class="container">
         <div class="section-head">
           <h2>Four ways to run Jamly</h2>
-          <p>Use the standalone desktop companion, command-line tools, browser extension, or lightweight userscript, all backed by the same durable local queue.</p>
+          <p>Use the standalone desktop companion, command-line tools, lightweight userscript, or browser extension, all backed by the same durable local queue.</p>
         </div>
 
         <div class="tabs" role="tablist" aria-label="Jamly workflows">
@@ -106,11 +106,11 @@
           <button class="tab" role="tab" aria-selected="false" aria-controls="panel-cli" id="tab-cli" data-tab="cli" type="button">
             2. CLI &amp; Service
           </button>
-          <button class="tab" role="tab" aria-selected="false" aria-controls="panel-extension" id="tab-extension" data-tab="extension" type="button">
-            3. Browser Extension
-          </button>
           <button class="tab" role="tab" aria-selected="false" aria-controls="panel-userscript" id="tab-userscript" data-tab="userscript" type="button">
-            4. Userscript
+            3. Userscript
+          </button>
+          <button class="tab" role="tab" aria-selected="false" aria-controls="panel-extension" id="tab-extension" data-tab="extension" type="button">
+            4. Browser Extension
           </button>
         </div>
 
@@ -121,7 +121,7 @@
                 <h3>Zero-Setup Desktop Companion</h3>
                 <p>
                   Portable archives for macOS (Apple Silicon), Windows x64, and Linux x64 bundle
-                  Python, Demucs, yt-dlp, Deno, ffmpeg, and ffprobe out of the box.
+                  the local separation engine, media extractor, JS runtime, and audio codecs out of the box.
                 </p>
                 <ol class="steps">
                   <li>
@@ -161,7 +161,7 @@
                   Run one-off batch jobs in the terminal, launch the companion web UI, or register a per-user background service.
                 </p>
                 <ol class="steps">
-                  <li><strong>Install &amp; verify:</strong> Run <code>jamly doctor</code> to check Python, yt-dlp, Deno, ffmpeg, and Torch device detection (CUDA / MPS / CPU).</li>
+                  <li><strong>Install &amp; verify:</strong> Run <code>jamly doctor</code> to verify the runtime, media extractor, JS runtime, audio tooling, and hardware acceleration (CUDA / MPS / CPU).</li>
                   <li><strong>Split URLs or local files:</strong> Pass URLs or file paths to <code>jamly split</code>, or pipe newline-separated inputs via stdin.</li>
                   <li><strong>Optional login service:</strong> Use <code>jamly service install</code> to create a user systemd unit (Linux), LaunchAgent (macOS), or logon Scheduled Task (Windows).</li>
                 </ol>
@@ -175,15 +175,52 @@
 <span class="tok-cmd">uv</span> tool install <span class="tok-flag">--python</span> 3.12 jamly-audio-sep
 <span class="tok-cmd">jamly</span> doctor
 
-<span class="tok-comment"># Split a URL or local audio file (drums, karaoke vocals, guitar, or all stems)</span>
+<span class="tok-comment"># Split a URL or local audio file (drums, karaoke vocals, or all stems)</span>
 <span class="tok-cmd">jamly</span> split <span class="tok-str">"https://youtu.be/VIDEO_ID"</span>
 <span class="tok-cmd">jamly</span> split <span class="tok-str">"https://youtu.be/VIDEO_ID"</span> <span class="tok-flag">--stem</span> vocals
-<span class="tok-cmd">jamly</span> split <span class="tok-str">"~/Music/my_song.flac"</span> <span class="tok-flag">--model</span> htdemucs_6s <span class="tok-flag">--stem</span> guitar <span class="tok-flag">--audio-format</span> wav
-<span class="tok-cmd">jamly</span> split <span class="tok-str">"https://youtu.be/VIDEO_ID"</span> <span class="tok-flag">--model</span> htdemucs_ft <span class="tok-flag">--replace-existing</span>
+<span class="tok-cmd">jamly</span> split <span class="tok-str">"~/Music/my_song.flac"</span> <span class="tok-flag">--stem</span> all <span class="tok-flag">--audio-format</span> wav
+<span class="tok-cmd">jamly</span> split <span class="tok-str">"https://youtu.be/VIDEO_ID"</span> <span class="tok-flag">--replace-existing</span>
 
 <span class="tok-comment"># Launch the local companion UI or background service</span>
 <span class="tok-cmd">jamly</span>
 <span class="tok-cmd">jamly</span> service install <span class="tok-flag">--audio-format</span> wav <span class="tok-flag">--port</span> 8765</code></pre>
+              </div>
+            </div>
+          </article>
+
+          <article class="tab-panel" id="panel-userscript" role="tabpanel" aria-labelledby="tab-userscript" hidden>
+            <div class="panel-grid">
+              <div>
+                <h3>Tampermonkey / Violentmonkey Userscript</h3>
+                <p>
+                  Add an on-page status badge and one-click enqueue button directly on YouTube and YouTube Music without loading an unpacked browser extension.
+                </p>
+                <ol class="steps">
+                  <li>
+                    <strong>Export the script:</strong> Run <code>jamly service userscript</code> to copy <code>jamly.user.js</code> to your user state directory.
+                  </li>
+                  <li>
+                    <strong>Install in your userscript manager:</strong> Drag or import <code>jamly.user.js</code> into Tampermonkey or Violentmonkey.
+                  </li>
+                  <li>
+                    <strong>Pair with your token:</strong> On YouTube or YouTube Music, open the userscript menu command <strong>Pair Jamly</strong> and paste the token from <code>jamly service token</code>.
+                  </li>
+                  <li>
+                    <strong>Enqueue while browsing:</strong> Click the Jamly button on any video page to queue it on your local backend.
+                  </li>
+                </ol>
+              </div>
+              <div class="code-card">
+                <div class="code-header">
+                  <span>Export userscript</span>
+                  <button class="copy-btn" data-copy="usr-code" type="button">Copy</button>
+                </div>
+                <pre><code id="usr-code"><span class="tok-comment"># Export jamly.user.js and retrieve your pairing token</span>
+<span class="tok-cmd">jamly</span> service userscript
+<span class="tok-cmd">jamly</span> service token</code></pre>
+                <p class="code-note">
+                  Connects exclusively to <code>http://127.0.0.1:8765</code> using <code>GM_xmlhttpRequest</code> with your Bearer token.
+                </p>
               </div>
             </div>
           </article>
@@ -227,43 +264,6 @@
               </div>
             </div>
           </article>
-
-          <article class="tab-panel" id="panel-userscript" role="tabpanel" aria-labelledby="tab-userscript" hidden>
-            <div class="panel-grid">
-              <div>
-                <h3>Tampermonkey / Violentmonkey Userscript</h3>
-                <p>
-                  Prefer not to load an unpacked extension? Jamly includes a lightweight userscript for YouTube and YouTube Music that adds an on-page status badge and one-click enqueue button.
-                </p>
-                <ol class="steps">
-                  <li>
-                    <strong>Export the script:</strong> Run <code>jamly service userscript</code> to copy <code>jamly.user.js</code> to your user state directory.
-                  </li>
-                  <li>
-                    <strong>Install in your userscript manager:</strong> Drag or import <code>jamly.user.js</code> into Tampermonkey or Violentmonkey.
-                  </li>
-                  <li>
-                    <strong>Pair with your token:</strong> On YouTube or YouTube Music, open the userscript menu command <strong>Pair Jamly</strong> and paste the token from <code>jamly service token</code>.
-                  </li>
-                  <li>
-                    <strong>Enqueue while browsing:</strong> Click the Jamly button on any video page to queue it on your local backend.
-                  </li>
-                </ol>
-              </div>
-              <div class="code-card">
-                <div class="code-header">
-                  <span>Export userscript</span>
-                  <button class="copy-btn" data-copy="usr-code" type="button">Copy</button>
-                </div>
-                <pre><code id="usr-code"><span class="tok-comment"># Export jamly.user.js and retrieve your pairing token</span>
-<span class="tok-cmd">jamly</span> service userscript
-<span class="tok-cmd">jamly</span> service token</code></pre>
-                <p class="code-note">
-                  Connects exclusively to <code>http://127.0.0.1:8765</code> using <code>GM_xmlhttpRequest</code> with your Bearer token.
-                </p>
-              </div>
-            </div>
-          </article>
         </div>
       </div>
     </section>
@@ -278,21 +278,21 @@
         <div class="cards-grid">
           <div class="card">
             <div class="card-tag">Default · 1x Speed</div>
-            <h3>Balanced (<code>htdemucs</code>)</h3>
+            <h3>Balanced (4-stem)</h3>
             <p>
-              Official 4-stem Hybrid Transformer Demucs model. Fast single-model inference suitable for everyday practice tracks.
+              Fast single-pass 4-stem separation (drums, bass, vocals, other) suited for everyday practice tracks and quick turnaround.
             </p>
           </div>
           <div class="card">
-            <div class="card-tag">Fine-Tuned · ~4x Slower</div>
-            <h3>Higher quality (<code>htdemucs_ft</code>)</h3>
+            <div class="card-tag">High Quality · ~4x Slower</div>
+            <h3>Higher quality</h3>
             <p>
-              Evaluates a four-model fine-tuned bag (dedicated per-stem transformers). Can reduce cymbal bleed on dense mixes at ~4x compute cost.
+              Multi-pass fine-tuned ensemble with dedicated per-stem weights. Can reduce cymbal bleed on dense mixes at ~4x compute cost.
             </p>
           </div>
           <div class="card">
             <div class="card-tag">6-Source · 1x Speed</div>
-            <h3>6-stem (<code>htdemucs_6s</code>)</h3>
+            <h3>6-stem</h3>
             <p>
               Separates drums, bass, guitar, piano, vocals, and other in a single pass, then sums all five non-drum stems in 64-bit float blocks for the drumless mix.
             </p>
@@ -302,7 +302,7 @@
         <div class="audio-specs">
           <div class="spec-item">
             <h4>Unscaled Float32 Stems</h4>
-            <p>Bypasses Demucs' default per-stem rescaling/clamping so summing <code>drums + no_drums</code> reconstructs the relative mix balance.</p>
+            <p>Applies a single shared gain instead of per-stem rescaling or clamping so summing <code>drums + no_drums</code> reconstructs the relative mix balance.</p>
           </div>
           <div class="spec-item">
             <h4>4x-Oversampled MP3 Peak Check</h4>
