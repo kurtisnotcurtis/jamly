@@ -35,8 +35,6 @@ jobs:
           - os: macos-15-intel
             label: macos-x86_64
     runs-on: ${{ matrix.os }}
-    env:
-      UV_CACHE_DIR: ${{ runner.temp }}/uv-cache
     defaults:
       run:
         shell: bash
@@ -47,6 +45,8 @@ jobs:
           version: "0.11.7"
           python-version: "3.12"
           enable-cache: false
+      - name: Configure uv cache directory
+        run: printf 'UV_CACHE_DIR=%s/uv-cache\n' "${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - name: Restore uv cache (with prefix fallback across lockfile bumps)
         id: uv-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830

@@ -190,7 +190,8 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.app.args.model, "htdemucs_ft")
 
     def test_unrelated_origin_or_host_is_rejected_even_with_token(self):
-        self.start()
+        with patch.object(server.socket, "getfqdn", side_effect=AssertionError("reverse DNS lookup must be skipped")):
+            self.start()
         nonce = "ab" * 32
         for headers in ({"Origin": "https://unrelated.example"}, {"Host": "unrelated.example"},
                         {"Origin": "null"}, {"Host": "localhost:invalid"},

@@ -93,3 +93,12 @@ test("verification failures surface the backend error", async () => {
   await elements.save.events.click();
   assert.equal(elements.status.textContent, "origin not allowed (403)");
 });
+
+test("async storage load does not overwrite user edits already typed into the form", async () => {
+  const { elements } = optionsPage({ stored: {} });
+  elements.url.value = "http://127.0.0.1:9123";
+  elements.token.value = "typed-before-storage-resolved";
+  await tick();
+  assert.equal(elements.url.value, "http://127.0.0.1:9123");
+  assert.equal(elements.token.value, "typed-before-storage-resolved");
+});

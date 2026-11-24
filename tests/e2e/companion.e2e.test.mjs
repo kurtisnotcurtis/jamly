@@ -119,7 +119,12 @@ async function startMockServer(root) {
 
   const info = await new Promise((resolve, reject) => {
     let buffer = "";
-    const timer = setTimeout(() => reject(new Error("Timed out starting mock_server: " + stderr)), 15000);
+    const timer = setTimeout(() => {
+      try { proc.kill("SIGKILL"); } catch (_err) {}
+      proc.stdout.destroy();
+      proc.stderr.destroy();
+      reject(new Error("Timed out starting mock_server: " + stderr));
+    }, 30000);
     proc.stdout.on("data", chunk => {
       buffer += chunk;
       const newline = buffer.indexOf("\n");
@@ -128,6 +133,7 @@ async function startMockServer(root) {
         try {
           resolve(JSON.parse(buffer.slice(0, newline)));
         } catch (err) {
+          try { proc.kill("SIGKILL"); } catch (_err) {}
           reject(err);
         }
       }
@@ -412,6 +418,7 @@ test("real unpacked browser extension verifies origin authorization, /handshake,
   optionsPage.on("pageerror", error => pageErrors.push(error.message));
   await optionsPage.goto(extensionOrigin + "/jamly_options.html");
   assert.equal(await optionsPage.textContent("#ext-origin"), extensionOrigin);
+  await optionsPage.waitForFunction(() => document.getElementById("url").value.length > 0);
 
   // Before authorizing the extension origin, pairing must be rejected with 403 via POST /handshake.
   await optionsPage.fill("#url", server.info.url);
