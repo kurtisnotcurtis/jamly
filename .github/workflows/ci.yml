@@ -44,6 +44,13 @@ jobs:
       - run: uv sync --locked
       - name: Run dev-check suite (version, doctor, pytest, ruff, Node, wheel smoke)
         run: uv run --locked python tools/dev-check.py
+      - name: Install Playwright E2E runner
+        if: matrix.python == '3.12'
+        run: npm ci --prefix tests/e2e
+      - name: Playwright companion & extension E2E
+        if: matrix.python == '3.12'
+        timeout-minutes: 5
+        run: node --test tests/e2e/companion.e2e.test.mjs
       - name: Real generated-audio pipeline
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         run: uv run --no-sync python -m unittest discover -s tests -p integration_pipeline.py

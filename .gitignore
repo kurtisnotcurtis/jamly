@@ -18,3 +18,4 @@ jamly_queue.json
 build/
 dist/
 *.lock.tmp
+node_modules/

@@ -1,0 +1,11 @@
+{
+  "name": "jamly-e2e",
+  "private": true,
+  "description": "Playwright E2E tests for the Jamly companion web UI and browser extension.",
+  "scripts": {
+    "test": "node --test companion.e2e.test.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.52.0"
+  }
+}

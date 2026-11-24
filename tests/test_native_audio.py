@@ -591,6 +591,99 @@ class ReproDistAndDevCheckTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "insecure"):
                     torch_installer.download_verified_wheel(good_pin, dest / "http")
 
+    def test_native_audio_component_flags_and_pruning(self):
+        with unittest.mock.patch.object(native_audio.os, "cpu_count", return_value=8):
+            self.assertEqual(native_audio.default_jobs(), 8)
+        with unittest.mock.patch.object(native_audio.os, "cpu_count", return_value=None):
+            self.assertEqual(native_audio.default_jobs(), 4)
+
+        flags = native_audio.ffmpeg_component_flags()
+        self.assertIn("--disable-avdevice", flags)
+        self.assertIn("--disable-hwaccels", flags)
+        self.assertIn("--disable-encoders", flags)
+        self.assertIn("--disable-decoders", flags)
+        self.assertIn("--disable-filters", flags)
+        self.assertIn("--disable-bsfs", flags)
+        joined = " ".join(flags)
+        self.assertIn("libmp3lame", joined)
+        self.assertIn("aresample", joined)
+        self.assertIn("astats", joined)
+        self.assertIn("aac_adtstoasc", joined)
+        self.assertIn("real_144", joined)
+        self.assertNotIn("mp3_header_decompress", joined)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            prefix = work / "install"
+            (work / ".jamly-native-build").write_text("", encoding="utf-8")
+            (work / "built.json").write_text("{}", encoding="utf-8")
+            (work / "build.log").write_text("ok\n", encoding="utf-8")
+            (work / "downloads").mkdir()
+            (work / "downloads" / "ffmpeg.tar.xz").write_bytes(b"tar")
+            (work / "source" / "ffmpeg").mkdir(parents=True)
+            (work / "source" / "ffmpeg" / "foo.o").write_bytes(b"obj")
+            (prefix / "bin").mkdir(parents=True)
+            (prefix / "bin" / "ffmpeg").write_bytes(b"bin")
+            (prefix / "bin" / "ffprobe").write_bytes(b"bin")
+            (prefix / "include" / "openssl").mkdir(parents=True)
+            (prefix / "include" / "openssl" / "ssl.h").write_text("", encoding="utf-8")
+            (prefix / "share" / "man").mkdir(parents=True)
+            (prefix / "lib" / "pkgconfig").mkdir(parents=True)
+            (prefix / "lib" / "pkgconfig" / "openssl.pc").write_text("", encoding="utf-8")
+            (prefix / "lib" / "libcrypto.a").write_bytes(b"static")
+            (prefix / "lib" / "libsndfile.la").write_text("", encoding="utf-8")
+            (prefix / "lib" / "libsndfile.so.1").write_bytes(b"shared")
+
+            native_audio._prune_build_tree(work, prefix)
+
+            self.assertFalse((work / "source").exists())
+            self.assertFalse((prefix / "include").exists())
+            self.assertFalse((prefix / "share").exists())
+            self.assertFalse((prefix / "lib" / "pkgconfig").exists())
+            self.assertFalse((prefix / "lib" / "libcrypto.a").exists())
+            self.assertFalse((prefix / "lib" / "libsndfile.la").exists())
+            self.assertTrue((prefix / "bin" / "ffmpeg").is_file())
+            self.assertTrue((prefix / "bin" / "ffprobe").is_file())
+            self.assertTrue((prefix / "lib" / "libsndfile.so.1").is_file())
+            self.assertTrue((work / "downloads" / "ffmpeg.tar.xz").is_file())
+            self.assertTrue((work / "built.json").is_file())
+            self.assertTrue((work / "build.log").is_file())
+
+    def test_linux_companion_archive_prefers_pigz_then_gzip_then_tarfile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            output = base / "desktop"
+            (output / "Jamly").mkdir(parents=True)
+            (output / "Jamly" / "jamly-runtime").write_bytes(b"exe")
+            archives = base / "companions"
+            archives.mkdir()
+
+            with unittest.mock.patch.object(build_companion.sys, "platform", "linux"), \
+                    unittest.mock.patch.object(build_companion.os, "name", "posix"), \
+                    unittest.mock.patch.object(
+                        build_companion.shutil, "which",
+                        side_effect=lambda name: f"/usr/bin/{name}" if name in ("tar", "pigz") else None,
+                    ), \
+                    unittest.mock.patch.object(build_companion.subprocess, "run") as run_mock:
+                artifact = build_companion._create_companion_archive(output, archives, "Jamly-0.3.0-linux-x86_64")
+            self.assertEqual(artifact, archives / "Jamly-0.3.0-linux-x86_64.tar.gz")
+            self.assertEqual(
+                run_mock.call_args.args[0],
+                ["tar", "-I", "pigz -6", "-cf", str(artifact), "-C", str(output), "Jamly"],
+            )
+
+            with unittest.mock.patch.object(build_companion.sys, "platform", "linux"), \
+                    unittest.mock.patch.object(build_companion.os, "name", "posix"), \
+                    unittest.mock.patch.object(build_companion.shutil, "which", return_value=None):
+                fallback = build_companion._create_companion_archive(output, archives, "Jamly-0.3.0-fallback")
+            self.assertTrue(fallback.is_file())
+            import tarfile
+            with tarfile.open(fallback, "r:gz") as tf:
+                self.assertIn("Jamly/jamly-runtime", tf.getnames())
+
+    def test_dev_check_includes_options_node_test(self):
+        self.assertIn("browser/extension/jamly_options_test.js", dev_check.NODE_TESTS)
+
 
 if __name__ == "__main__":
     unittest.main()

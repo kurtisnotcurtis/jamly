@@ -8,6 +8,7 @@ Usage::
 
     python tools/dev-check.py                 # full local gate (see flags)
     python tools/dev-check.py --no-build      # skip wheel build + fresh-install smoke
+    python tools/dev-check.py --e2e           # also run Playwright companion + extension E2E tests
     python tools/dev-check.py --integration   # also run the real-model audio pipeline
     python tools/dev-check.py --browser       # also run the headless-Chrome companion smoke
 
@@ -32,12 +33,36 @@ ROOT = Path(__file__).resolve().parents[1]
 NODE_TESTS = [
     "browser/extension/jamly_client_test.js",
     "browser/extension/jamly_extension_bg_test.js",
+    "browser/extension/jamly_options_test.js",
     "browser/extension/jamly_popup_test.js",
 ]
 
 
 def _have(name: str) -> bool:
     return shutil.which(name) is not None
+
+
+def _have_chromium() -> bool:
+    if os.environ.get("CHROME_BIN") and Path(os.environ["CHROME_BIN"]).is_file():
+        return True
+    for name in ("google-chrome", "google-chrome-stable", "chrome", "chromium", "chromium-browser",
+                 "microsoft-edge", "msedge"):
+        if _have(name):
+            return True
+    candidates = {
+        "darwin": (
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ),
+        "win32": (
+            os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), r"Google\Chrome\Application\chrome.exe"),
+            os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), r"Google\Chrome\Application\chrome.exe"),
+            os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), r"Microsoft\Edge\Application\msedge.exe"),
+            os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), r"Microsoft\Edge\Application\msedge.exe"),
+        ),
+    }.get(sys.platform, ())
+    return any(Path(path).is_file() for path in candidates)
 
 
 def _base_interpreter(use_uv: bool) -> list[str]:
@@ -135,6 +160,11 @@ def main(argv=None) -> int:
         help="Skip `uv build` + fresh-install wheel smoke (faster local runs)",
     )
     parser.add_argument(
+        "--e2e",
+        action="store_true",
+        help="Also run the fast Playwright companion + extension E2E tests (needs Chrome/Edge)",
+    )
+    parser.add_argument(
         "--integration",
         action="store_true",
         help="Also run the real-model audio pipeline integration test",
@@ -185,10 +215,23 @@ def main(argv=None) -> int:
         ):
             return _fail()
 
+    if args.e2e:
+        e2e_pw = ROOT / "tests" / "e2e" / "node_modules" / "playwright-core"
+        if not _have("node"):
+            print("\n[skip] Playwright E2E (node not on PATH)")
+        elif not e2e_pw.is_dir():
+            print("\n[skip] Playwright E2E (install once with `npm ci --prefix tests/e2e`)")
+        elif not _have_chromium():
+            print("\n[skip] Playwright E2E (no Chrome/Chromium/Edge binary; set CHROME_BIN)")
+        else:
+            if not run(["node", "--test", str(ROOT / "tests" / "e2e" / "companion.e2e.test.mjs")],
+                       "Playwright companion + extension E2E"):
+                return _fail()
+
     if args.browser:
         if not _have("node"):
             print("\n[skip] browser smoke (node not on PATH)")
-        elif not (_have("chrome") or _have("chromium") or bool(os.environ.get("CHROME_BIN"))):
+        elif not _have_chromium():
             print("\n[skip] browser smoke (no Chrome binary; set CHROME_BIN)")
         else:
             if not run(["node", str(ROOT / "tools" / "browser_smoke.mjs")],

@@ -1,6 +1,7 @@
 graft tools
 include uv.lock
 include DESIGN.md
-# Bytecode caches live only in a developer working tree (not in CI) and embed
-# source mtimes, so exclude them to keep the sdist reproducible byte-for-byte.
+# Bytecode caches and local E2E node_modules live only in a developer working tree
+# (not in CI) and must not enter sdists.
 recursive-exclude * *.pyc
+prune tests/e2e/node_modules

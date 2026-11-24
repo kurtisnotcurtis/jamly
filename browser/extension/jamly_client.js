@@ -54,8 +54,10 @@
     const timer = setTimeout(() => controller.abort(), 10000);
     let payload;
     try {
+      // POST ensures Chromium/Edge attaches Origin even when the extension has host_permissions,
+      // so unauthorized extension origins are rejected before any pairing token is sent.
       const response = await global.fetch(base + "/handshake?nonce=" + nonce, {
-        method: "GET",
+        method: "POST",
         headers: { Accept: "application/json" },
         signal: controller.signal,
         cache: "no-store",

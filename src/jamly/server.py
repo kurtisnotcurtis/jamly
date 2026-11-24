@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import signal
 import socket
+import socketserver
 import sys
 import threading
 from urllib.parse import quote, urlsplit
@@ -132,6 +133,13 @@ def build_parser() -> argparse.ArgumentParser:
 class _HTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+
+    def server_bind(self):
+        # Skip HTTPServer's socket.getfqdn() reverse-DNS lookup, which can stall for seconds on macOS.
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
 
     def service_actions(self):
         super().service_actions()

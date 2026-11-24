@@ -5,8 +5,8 @@
     byId("ext-origin").textContent = location.origin;
   }
   chrome.storage.local.get(["jamly_serverUrl", "jamly_serverToken"]).then(stored => {
-    byId("url").value = stored.jamly_serverUrl || "http://127.0.0.1:8765";
-    byId("token").value = stored.jamly_serverToken || "";
+    if (!byId("url").value) byId("url").value = stored.jamly_serverUrl || "http://127.0.0.1:8765";
+    if (!byId("token").value) byId("token").value = stored.jamly_serverToken || "";
   });
 
   byId("save").addEventListener("click", async () => {

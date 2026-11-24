@@ -22,7 +22,7 @@ TOOLS_DIR = Path(__file__).resolve().parent
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
-from native_audio import ROOT, SOURCES, SOURCES_FILE, build, checksum, download_source  # noqa: E402
+from native_audio import ROOT, SOURCES, SOURCES_FILE, build, checksum, default_jobs, download_source  # noqa: E402
 
 
 def python_notices(destination: Path) -> None:
@@ -178,9 +178,31 @@ def build_native_sources_archive(archives: Path, version: str, downloads: Path) 
     return source_archive
 
 
+def _create_companion_archive(output: Path, archives: Path, release: str) -> Path:
+    if sys.platform == "darwin":
+        artifact = archives / (release + ".zip")
+        subprocess.run(["/usr/bin/ditto", "-c", "-k", "--sequesterRsrc", "--keepParent",
+                        str(output / "Jamly.app"), str(artifact)], check=True)
+        return artifact
+    if os.name == "nt":
+        return Path(shutil.make_archive(str(archives / release), "zip", output, "Jamly"))
+    artifact = archives / (release + ".tar.gz")
+    if shutil.which("tar"):
+        compressor = "pigz -6" if shutil.which("pigz") else "gzip -6" if shutil.which("gzip") else None
+        if compressor is not None:
+            subprocess.run(
+                ["tar", "-I", compressor, "-cf", str(artifact), "-C", str(output), "Jamly"],
+                check=True,
+            )
+            return artifact
+    with tarfile.open(artifact, "w:gz", compresslevel=6) as archive:
+        archive.add(output / "Jamly", arcname="Jamly")
+    return artifact
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--jobs", type=int, default=4, help="Native compilation parallelism")
+    parser.add_argument("--jobs", type=int, default=default_jobs(), help="Native compilation parallelism")
     parser.add_argument("--skip-native-sources", action="store_true",
                         help="Skip creating the shared Jamly-<version>-native-sources.zip archive")
     parser.add_argument("--rebuild-native", action="store_true",
@@ -222,13 +244,7 @@ def main() -> int:
     release = "Jamly-%s-%s" % (__version__, identity)
     archives = ROOT / "dist" / "companions"
     archives.mkdir(parents=True, exist_ok=True)
-    if sys.platform == "darwin":
-        artifact = archives / (release + ".zip")
-        subprocess.run(["/usr/bin/ditto", "-c", "-k", "--sequesterRsrc", "--keepParent",
-                        str(output / "Jamly.app"), str(artifact)], check=True)
-    else:
-        kind = "zip" if os.name == "nt" else "gztar"
-        artifact = Path(shutil.make_archive(str(archives / release), kind, output, "Jamly"))
+    artifact = _create_companion_archive(output, archives, release)
     packaged = [artifact]
     if not args.skip_native_sources:
         packaged.append(build_native_sources_archive(

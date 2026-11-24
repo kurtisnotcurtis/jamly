@@ -16,6 +16,7 @@ function makeClientProof(token, nonce, port) {
 async function backend(t, { token = "paired-token-0123456789abcdef012345", failHandshake = false } = {}) {
   const received = [];
   const authHeaders = [];
+  const handshakeMethods = [];
   const server = http.createServer((request, response) => {
     const chunks = [];
     request.on("data", chunk => chunks.push(chunk));
@@ -25,6 +26,7 @@ async function backend(t, { token = "paired-token-0123456789abcdef012345", failH
         authHeaders.push({ url: request.url, auth: request.headers.authorization });
       }
       if (request.url.startsWith("/handshake?")) {
+        handshakeMethods.push(request.method);
         const parsed = new URL("http://127.0.0.1" + request.url);
         const nonce = parsed.searchParams.get("nonce") || "";
         if (failHandshake) {
@@ -58,11 +60,12 @@ async function backend(t, { token = "paired-token-0123456789abcdef012345", failH
     config: { url: "http://127.0.0.1:" + server.address().port, token },
     received,
     authHeaders,
+    handshakeMethods,
   };
 }
 
 test("paired JSON status, submission and retry preserve input and options", async t => {
-  const { config, received } = await backend(t);
+  const { config, received, handshakeMethods } = await backend(t);
   assert.equal((await client.status(config)).api_version, 3);
   await client.status(config, { q: "jazz", status: "done", model: "all", page: 2, page_size: 25 });
   assert.equal((await client.addInputs(config, ["https://example.test/a"], true, {
@@ -70,6 +73,7 @@ test("paired JSON status, submission and retry preserve input and options", asyn
   })).newly_added, 1);
   await client.retry(config, "src-id", false);
   await client.cancel(config, "src-id");
+  assert.ok(handshakeMethods.length > 0 && handshakeMethods.every(method => method === "POST"));
   assert.deepEqual(received, [
     { url: "/status" },
     { url: "/status?q=jazz&status=done&page=2&page_size=25" },
