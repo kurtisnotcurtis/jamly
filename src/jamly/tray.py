@@ -29,20 +29,26 @@ def tray_status(app) -> tuple[str, str]:
     """Return (tooltip, menu_status_line) summarizing the server's live state."""
     with app._status_lock:
         current = dict(app._current) if app._current else None
+        server_error = getattr(app, "_error", None)
         items = app.queue._items
         pending = sum(1 for item in items if item["status"] == "pending")
+        running = sum(1 for item in items if item["status"] == "running")
         done = sum(1 for item in items if item["status"] in ("done", "skipped"))
-    if current:
+    if server_error:
+        detail = "Error (check Jamly)"
+    elif current:
         if current.get("cancelling"):
             detail = "Cancelling..."
         else:
             stage = current.get("stage") or "running"
             detail = _STAGES.get(stage, "Working")
             progress = current.get("progress")
-            if stage == "separate" and isinstance(progress, int):
+            if isinstance(progress, int):
                 detail = f"{detail} ({progress}%)"
         if pending > 0:
             detail = f"{detail} · {pending} queued"
+    elif running > 0:
+        detail = f"Working · {pending} queued" if pending > 0 else "Working"
     elif pending > 0:
         detail = f"{pending} queued"
     elif done > 0:

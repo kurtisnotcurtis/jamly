@@ -168,6 +168,19 @@ class MultiHostExtractionTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(InputError):
                 make_input(bad)
 
+    def test_webm_audio_paths_are_accepted_as_local_audio(self):
+        with tempfile.TemporaryDirectory() as root:
+            audio = Path(root) / "Artist - Song [dQw4w9WgXcQ]_original.webm"
+            audio.write_bytes(b"\x1aE\xdf\xa3")
+            parsed = make_input(str(audio))
+            self.assertTrue(parsed.watch_id.startswith("file-"))
+            self.assertEqual(local_audio_path(str(audio)), audio.resolve())
+        # Bare filenames and Windows paths containing [brackets] must never raise urlsplit Invalid IPv6 URL.
+        self.assertIsNotNone(local_audio_path("Artist - Song [live take].wav"))
+        self.assertIsNotNone(local_audio_path(r"C:\Users\Kurt\Music\jamly\Artist - Song [dQw4w9WgXcQ]_original.webm"))
+        with self.assertRaises(InputError):
+            extract_watch_id(r"C:\Users\Kurt\Music\jamly\Artist - Song [dQw4w9WgXcQ]_original.webm")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

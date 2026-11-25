@@ -47,6 +47,28 @@ class TrayTests(unittest.TestCase):
                     tray.tray_status(app),
                     ("Jamly - Idle (2 ready)", "Status: Idle (2 ready)"),
                 )
+
+                with app._status_lock:
+                    app.queue.add("c", source_url="https://youtu.be/c")
+                    app.queue.mark_running("c")
+                self.assertEqual(
+                    tray.tray_status(app),
+                    ("Jamly - Working", "Status: Working"),
+                )
+
+                with app._status_lock:
+                    app._current = {"watch_id": "c", "stage": "download", "progress": 60, "cancelling": False}
+                self.assertEqual(
+                    tray.tray_status(app),
+                    ("Jamly - Downloading audio (60%)", "Status: Downloading audio (60%)"),
+                )
+
+                with app._status_lock:
+                    app._error = "Cannot persist queue state"
+                self.assertEqual(
+                    tray.tray_status(app),
+                    ("Jamly - Error (check Jamly)", "Status: Error (check Jamly)"),
+                )
             finally:
                 app.stop()
 

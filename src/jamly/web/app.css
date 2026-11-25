@@ -143,16 +143,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   gap: 4px;
   min-width: 34px;
   min-height: 34px;
-  padding: 6px 8px;
+  padding: 8px;
   font-size: 11px;
   font-weight: 700;
   white-space: nowrap;
-  background: rgba(240, 138, 158, 0.14);
-  border-color: rgba(240, 138, 158, 0.42);
-  color: #fbd2db;
+  border-radius: 999px;
+  background: var(--surface);
+  border-color: var(--border);
+  color: inherit;
 }
-.stem-btn:hover:not(:disabled) {
-  background: rgba(240, 138, 158, 0.24);
+.stem-btn:hover:not(:disabled):not(.active) {
+  background: var(--surface-hover);
   border-color: var(--accent);
 }
 .stem-btn.active, .stem-btn.active:hover:not(:disabled) {
@@ -160,7 +161,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-color: var(--accent);
   color: var(--accent-ink);
 }
-.stem-btn.playing { box-shadow: 0 0 0 3px rgba(240, 138, 158, 0.25); }
+.stem-btn.playing { box-shadow: 0 0 0 3px rgba(240, 138, 158, 0.3); }
 .icon-btn { padding: 7px; min-width: 34px; min-height: 34px; background: var(--bg-alt); }
 .toolbar-btn:hover:not(:disabled), .icon-btn:hover:not(:disabled) {
   background: var(--surface-hover);
@@ -170,9 +171,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-color: var(--err);
   color: var(--err);
 }
-.cancel-btn { padding: 7px 11px; background: var(--bg-alt); }
 #jobs { list-style: none; padding: 0; margin: 14px 0 0; }
 #jobs li {
+  position: relative;
+  overflow: hidden;
   padding: 16px;
   margin-bottom: 10px;
   background: var(--surface);
@@ -180,10 +182,172 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-radius: 10px;
   overflow-wrap: anywhere;
 }
+#jobs li.has-dismiss {
+  padding-right: 44px;
+}
+.job-dismiss {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0.65;
+  cursor: pointer;
+}
+.job-dismiss:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  opacity: 1;
+}
+.job-dismiss svg {
+  width: 14px;
+  height: 14px;
+}
+.job-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  pointer-events: none;
+  overflow: hidden;
+}
+.job-progress-fill {
+  position: relative;
+  height: 100%;
+  width: 0;
+  transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  background: linear-gradient(
+    105deg,
+    #a84a63 0%,
+    #c45d77 28%,
+    #df788f 54%,
+    #c45d77 78%,
+    #a84a63 100%
+  );
+  background-size: 140px 100%;
+  background-repeat: repeat-x;
+  box-shadow: 0 0 6px rgba(227, 100, 126, 0.18);
+  animation: jamly-progress-flow 2.2s linear infinite;
+  overflow: hidden;
+}
+.job-progress-fill::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 12px;
+  background: linear-gradient(90deg, transparent 0%, rgba(240, 138, 158, 0.42) 100%);
+  animation: jamly-progress-tip 1.8s ease-in-out infinite alternate;
+}
+.job-progress-fill::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -56px;
+  width: 56px;
+  background: linear-gradient(90deg, transparent 0%, rgba(240, 138, 158, 0.22) 50%, transparent 100%);
+  animation: jamly-progress-glisten 2.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.job-progress.indeterminate .job-progress-fill,
+.job-progress.cancelling .job-progress-fill {
+  width: 34%;
+  transition: none;
+  animation:
+    jamly-progress-flow 2.2s linear infinite,
+    jamly-progress-indeterminate 1.6s ease-in-out infinite;
+}
+.job-progress.cancelling .job-progress-fill {
+  background: rgba(240, 138, 158, 0.32);
+  box-shadow: none;
+  animation: jamly-progress-indeterminate 2s ease-in-out infinite;
+}
+.job-progress.indeterminate .job-progress-fill::before,
+.job-progress.indeterminate .job-progress-fill::after,
+.job-progress.cancelling .job-progress-fill::before,
+.job-progress.cancelling .job-progress-fill::after {
+  display: none;
+}
+@keyframes jamly-progress-flow {
+  0% { background-position: 0 0; }
+  100% { background-position: 140px 0; }
+}
+@keyframes jamly-progress-tip {
+  0% { opacity: 0.35; }
+  100% { opacity: 0.85; }
+}
+@keyframes jamly-progress-glisten {
+  0% { left: -56px; }
+  100% { left: 100%; }
+}
+@keyframes jamly-progress-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .job-progress-fill {
+    transition: none;
+    animation: jamly-progress-flow 3.2s linear infinite;
+  }
+  .job-progress-fill::before {
+    animation: jamly-progress-tip 2.4s ease-in-out infinite alternate;
+  }
+  .job-progress-fill::after {
+    display: none;
+    animation: none;
+  }
+  .job-progress.indeterminate .job-progress-fill {
+    width: 100%;
+    opacity: 0.72;
+    animation: jamly-progress-flow 3.2s linear infinite;
+  }
+  .job-progress.cancelling .job-progress-fill {
+    width: 100%;
+    opacity: 0.4;
+    animation: jamly-progress-tip 2.4s ease-in-out infinite alternate;
+  }
+}
 #jobs p { margin: 2px 0; }
-.job-main { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.job-main { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .job-info { min-width: 0; flex: 1; }
 .job-title { font-weight: 700; }
+.source-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  margin-inline-start: 6px;
+  vertical-align: -5px;
+  line-height: 1;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  text-decoration: none;
+  cursor: pointer;
+}
+.source-link:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--border);
+  color: var(--accent);
+}
+.source-link svg {
+  width: 15px;
+  height: 15px;
+}
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -251,7 +415,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   flex-shrink: 0;
   max-width: 62%;
 }
-.job-actions > .player-toggles { margin-inline-end: 16px; }
+.job-actions > .job-controls:not(:first-child) {
+  margin-inline-start: 12px;
+}
 .stem-group { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .stem-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, auto); gap: 6px; }
 .stem-caption { max-width: 140px; font-size: 10px; color: var(--muted); text-align: center; line-height: 1.25; }
@@ -298,6 +464,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .player-speed input[type="range"] { width: 160px; padding: 0; border: 0; background: transparent; accent-color: var(--accent); }
 .player-speed output { min-width: 38px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .player-speed .toolbar-btn { padding: 5px 9px; font-size: 12px; }
+.player-actions { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
 #player-close { font-size: 18px; line-height: 1; flex-shrink: 0; }
 #player-toggles { justify-content: flex-end; }
 .player-toggles {
@@ -318,6 +485,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   background: var(--surface);
   color: inherit;
   cursor: pointer;
+}
+#jobs .player-toggle-primary {
+  padding: 11px;
+  border-color: rgba(240, 138, 158, 0.45);
+  margin-inline-end: 2px;
+}
+#jobs .player-toggle-primary svg {
+  width: 18px;
+  height: 18px;
 }
 .player-toggle:hover:not(.active) { border-color: var(--accent); background: var(--surface-hover); }
 .player-toggle.active, .player-toggle.active:hover:not(:disabled) {
@@ -343,8 +519,9 @@ code {
   header { flex-direction: column; align-items: flex-start; gap: 12px; }
   .settings { grid-template-columns: 1fr; }
   .folder { flex-wrap: wrap; }
-  .job-main { flex-direction: column; gap: 10px; }
+  .job-main { flex-direction: column; align-items: stretch; gap: 10px; }
   .job-actions { justify-content: flex-start; max-width: 100%; flex-wrap: wrap; }
+  .job-actions > .job-controls:not(:first-child) { margin-inline-start: auto; }
   .exports-filters { grid-template-columns: 1fr 1fr; }
   .exports-filters input { grid-column: 1 / -1; }
   .player-header { flex-wrap: wrap; gap: 8px 10px; }

@@ -230,8 +230,66 @@ test("companion UI DOM E2E: pairing, uploads, filters, player, extension setup, 
   await page.fill("#inputs", "https://example.test/slow");
   await page.click("#submit");
   await page.waitForFunction(() => document.getElementById("jobs").textContent.includes("35%"));
+  const progressInfo = await page.evaluate(() => {
+    const bar = document.querySelector("#jobs li .job-progress");
+    const fill = bar?.querySelector(".job-progress-fill");
+    const row = bar?.closest("li");
+    if (row) row.__jamlyKept = "yes";
+    const doneRow = document.querySelector("#jobs li:has(.status-badge.done)");
+    return {
+      role: bar?.getAttribute("role"),
+      valuenow: bar?.getAttribute("aria-valuenow"),
+      dataProgress: bar?.dataset.progress,
+      barHeight: bar ? Math.round(bar.getBoundingClientRect().height) : 0,
+      fillWidth: fill?.style.width || "",
+      fillAnimation: fill ? getComputedStyle(fill).animationName : "",
+      doneHasBar: Boolean(doneRow?.querySelector(".job-progress")),
+    };
+  });
+  assert.equal(progressInfo.role, "progressbar");
+  assert.equal(progressInfo.valuenow, "41");
+  assert.equal(progressInfo.dataProgress, "41");
+  assert.equal(progressInfo.barHeight, 4);
+  assert.equal(progressInfo.fillWidth, "41%");
+  assert.match(progressInfo.fillAnimation, /jamly-progress-flow/);
+  assert.equal(progressInfo.doneHasBar, false);
+
+  // Under prefers-reduced-motion: reduce (e.g. Windows animation effects off), keep calm color flow active.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const reducedMotionAnim = await page.evaluate(() => {
+    const fill = document.querySelector("#jobs li .job-progress-fill");
+    return fill ? getComputedStyle(fill).animationName : "";
+  });
+  assert.match(reducedMotionAnim, /jamly-progress-flow/);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+
+  // Verify live progress advances update the active card in place without recreating the DOM row.
+  await page.route("**/status*", async route => {
+    const response = await route.fetch();
+    const body = await response.json();
+    if (body.current && body.current.progress === 35) {
+      body.current.progress = 70;
+      body.current.overall_progress = 68;
+    }
+    await route.fulfill({ response, body: JSON.stringify(body) });
+  }, { times: 1 });
+  await page.waitForFunction(() => document.querySelector("#jobs li .job-progress")?.getAttribute("aria-valuenow") === "68");
+  const inPlaceInfo = await page.evaluate(() => {
+    const bar = document.querySelector("#jobs li .job-progress");
+    const row = bar?.closest("li");
+    return {
+      kept: row?.__jamlyKept,
+      badgeText: row?.querySelector(".status-badge")?.textContent || "",
+      fillWidth: bar?.querySelector(".job-progress-fill")?.style.width || "",
+    };
+  });
+  assert.equal(inPlaceInfo.kept, "yes");
+  assert.match(inPlaceInfo.badgeText, /70%/);
+  assert.equal(inPlaceInfo.fillWidth, "68%");
+
   await page.locator("#jobs .cancel-btn").first().click();
   await page.waitForSelector("#jobs .status-badge.muted");
+  assert.equal(await page.locator("#jobs li .job-progress").count(), 0);
 
   // 4. Local file upload via #files input, secondary preset export, and practice player stem switching.
   const wavPath = path.join(root, "Groove - Studio Take.wav");
@@ -244,16 +302,55 @@ test("companion UI DOM E2E: pairing, uploads, filters, player, extension setup, 
   await page.selectOption("#stem", "guitar");
   await page.setInputFiles("#files", wavPath);
   await page.click("#submit");
+  const grooveRow = page.locator("#jobs li", { hasText: "Groove - Studio Take" });
+  await grooveRow.locator('button.player-toggle[aria-label="guitar"]').waitFor();
   await page.waitForSelector("#jobs .stem-group .stem-btn");
 
   // Play Original, seek forward, switch to another stem on the same track, and verify position is preserved.
-  const grooveRow = page.locator("#jobs li", { hasText: "Groove - Studio Take" });
+  const toggleSizes = await grooveRow.evaluate(row => {
+    const orig = row.querySelector('button.player-toggle[aria-label="Original"]');
+    const stem = row.querySelector('button.player-toggle[aria-label="guitar"]');
+    return {
+      origWidth: orig ? Math.round(orig.getBoundingClientRect().width) : 0,
+      stemWidth: stem ? Math.round(stem.getBoundingClientRect().width) : 0,
+    };
+  });
+  assert.ok(toggleSizes.stemWidth > 0 && toggleSizes.origWidth > toggleSizes.stemWidth,
+    `Expected Original (${toggleSizes.origWidth}px) > stem (${toggleSizes.stemWidth}px)`);
+  // Completed rows omit retry and folder buttons and show a borderless dismiss X.
+  const completedControls = await grooveRow.evaluate(row => {
+    const dismiss = row.querySelector('button.job-dismiss[aria-label="Remove from list"]');
+    return {
+      hasRetry: Boolean(row.querySelector('button[aria-label="Retry / check files"]')),
+      hasFolder: Boolean(row.querySelector('button[aria-label="Show files in folder"]')),
+      hasDismiss: Boolean(dismiss),
+      dismissBorder: dismiss ? getComputedStyle(dismiss).borderTopWidth : "",
+    };
+  });
+  assert.equal(completedControls.hasRetry, false);
+  assert.equal(completedControls.hasFolder, false);
+  assert.equal(completedControls.hasDismiss, true);
+  assert.equal(completedControls.dismissBorder, "0px");
   await grooveRow.locator('button.player-toggle[aria-label="Original"]').click();
   await page.waitForSelector("#player:not([hidden])");
+  await Promise.all([
+    page.waitForResponse(res => res.url().endsWith("/app/open-folder") && res.ok()),
+    page.click("#player-open-folder"),
+  ]);
   await page.waitForFunction(() => {
     const audio = document.getElementById("player-audio");
     return audio.readyState >= 1 && Number.isFinite(audio.duration) && audio.duration > 0.2;
   });
+  const footerToggleSizes = await page.evaluate(() => {
+    const orig = document.querySelector('#player-toggles button.player-toggle[aria-label="Original"]');
+    const stem = document.querySelector('#player-toggles button.player-toggle[aria-label="guitar"]');
+    return {
+      origWidth: orig ? Math.round(orig.getBoundingClientRect().width) : 0,
+      stemWidth: stem ? Math.round(stem.getBoundingClientRect().width) : 0,
+    };
+  });
+  assert.ok(footerToggleSizes.origWidth > 0);
+  assert.equal(footerToggleSizes.origWidth, footerToggleSizes.stemWidth);
   await page.evaluate(() => {
     const audio = document.getElementById("player-audio");
     audio.pause();
@@ -267,7 +364,12 @@ test("companion UI DOM E2E: pairing, uploads, filters, player, extension setup, 
       && audio.currentTime >= 0.15;
   });
 
-  // Play a secondary preset export button and confirm the player switches to it.
+  // Play a secondary preset export button and confirm it uses consistent circular styling and switches the player.
+  const secondaryStyle = await grooveRow.locator(".stem-group .stem-btn").first().evaluate(el => {
+    const cs = getComputedStyle(el);
+    return { borderRadius: cs.borderRadius };
+  });
+  assert.equal(secondaryStyle.borderRadius, "999px");
   await grooveRow.locator(".stem-group .stem-btn").first().click();
   await page.waitForFunction(() => {
     const audio = document.getElementById("player-audio");
@@ -286,6 +388,39 @@ test("companion UI DOM E2E: pairing, uploads, filters, player, extension setup, 
   // Close practice player.
   await page.click("#player-close");
   await page.locator("#player").waitFor({ state: "hidden" });
+
+  // Verify external link sits inline after the title and playback toggles align consistently
+  // on the right regardless of whether an external link is present; also exercise single-item dismiss.
+  await page.selectOption("#stem", "drums");
+  await page.fill("#inputs", "dQw4w9WgXcQ");
+  await page.click("#submit");
+  const bareIdRow = page.locator("#jobs li", { hasText: "Track dQw4w9WgXcQ" });
+  await bareIdRow.locator(".status-badge.done").waitFor();
+  const alignment = await page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll("#jobs > li"));
+    const bareRow = rows.find(row => row.textContent.includes("Track dQw4w9WgXcQ"));
+    const linkRow = rows.find(row => row.textContent.includes("Flaky Track"));
+    const bareToggles = bareRow?.querySelector(".player-toggles")?.getBoundingClientRect();
+    const linkToggles = linkRow?.querySelector(".player-toggles")?.getBoundingClientRect();
+    const titleLink = linkRow?.querySelector('.job-title a[aria-label="Open original URL"]');
+    const actionsLink = linkRow?.querySelector('.job-actions a[aria-label="Open original URL"]');
+    return {
+      bareHasLink: Boolean(bareRow?.querySelector('a[aria-label="Open original URL"]')),
+      linkInTitle: Boolean(titleLink),
+      linkInActions: Boolean(actionsLink),
+      bareLeft: bareToggles ? Math.round(bareToggles.left) : -1,
+      bareRight: bareToggles ? Math.round(bareToggles.right) : -1,
+      linkLeft: linkToggles ? Math.round(linkToggles.left) : -2,
+      linkRight: linkToggles ? Math.round(linkToggles.right) : -2,
+    };
+  });
+  assert.equal(alignment.bareHasLink, false);
+  assert.equal(alignment.linkInTitle, true);
+  assert.equal(alignment.linkInActions, false);
+  assert.equal(alignment.bareLeft, alignment.linkLeft);
+  assert.equal(alignment.bareRight, alignment.linkRight);
+  await bareIdRow.locator('button.job-dismiss[aria-label="Remove from list"]').click();
+  await bareIdRow.waitFor({ state: "detached" });
 
   // 5. Exports search, status/model filters, reset, open folder, clear list, and rescan folder.
   await page.fill("#filter-query", "Groove");

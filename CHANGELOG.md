@@ -4,7 +4,15 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **Thin bottom progress bar on active Exports cards.** Stream real download byte progress (`yt-dlp --progress-template`) and per-stem mix/encode/peak-check progress alongside separation chunk progress, expose monotonic weighted `overall_progress` on `/status`, and render a subtle animated 4px bottom progress bar in the companion UI with in-place DOM updates across polls (`src/jamly/core.py`, `src/jamly/run.py`, `src/jamly/audio.py`, `src/jamly/server.py`, `src/jamly/web/app.js`, `src/jamly/web/app.css`).
+
+### Changed
+- **Cleaner Exports list controls and practice player footer.** Replaced the `Original` toggle icon with a play triangle (`42px` on export cards, uniform `34px` in the player footer), moved source link / source folder buttons inline after the track title so playback toggles stay cleanly right-aligned across rows, converted the active Cancel control to a vertically centered icon-only `×`, moved `"Remove from list"` to a borderless top-right `×` dismiss button on terminal cards, moved `"Show files in folder"` from individual cards into the practice player footer, and hid `"Retry / check files"` on completed items (`src/jamly/web/index.html`, `src/jamly/web/app.js`, `src/jamly/web/app.css`).
+
+### Fixed
+- **Keep player toggle buttons circular and consistent on Retry and secondary exports.** Retain the matching primary export in `outputs` while retrying instead of demoting it into secondary `exports`, and align `.stem-btn` pill shape and colors with `.player-toggle` (`src/jamly/server.py`, `src/jamly/web/app.css`).
+- **Prevent worker crash and tray Idle desync when retrying legacy or bracketed local paths.** Check explicit local paths before URL parsing and catch malformed `urlsplit` IPv6 errors (such as Windows paths containing `[video_id]`), guard `local_audio_path()` before marking a job running in `ItemServer._process_one`, accept retained `.webm` audio files in `LOCAL_AUDIO_EXTENSIONS` / `audio/webm`, and surface `Working` / `Error` and stage percentages accurately in `tray_status()` (`src/jamly/normalize.py`, `src/jamly/server.py`, `src/jamly/http_handler.py`, `src/jamly/tray.py`, `src/jamly/web/app.js`).
 
 ## [0.4.1] - 2026-11-24
 

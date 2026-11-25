@@ -84,3 +84,21 @@ class PairTests(unittest.TestCase):
         self.assertEqual(all_info["gain"], 1.0)
         for name in self.stems:
             self.assertTrue(all_out[name].is_file())
+
+    def test_render_pair_reports_monotonic_progress(self):
+        wav_out = {name: self.root / ("prog-" + name + ".wav") for name in ("drums", "no_drums")}
+        wav_progress = []
+        render_pair(self.stems, self.root, wav_out, "wav", "", on_progress=wav_progress.append)
+        self.assertTrue(wav_progress)
+        self.assertEqual(wav_progress, sorted(set(wav_progress)))
+        self.assertGreaterEqual(wav_progress[0], 1)
+        self.assertEqual(wav_progress[-1], 99)
+
+        ffmpeg = shutil.which("ffmpeg")
+        self.assertIsNotNone(ffmpeg, "ffmpeg is required for the audio contract tests")
+        mp3_out = {name: self.root / ("prog-" + name + ".mp3") for name in ("drums", "no_drums")}
+        mp3_progress = []
+        render_pair(self.stems, self.root, mp3_out, "mp3", ffmpeg, on_progress=mp3_progress.append)
+        self.assertGreaterEqual(len(mp3_progress), 4)
+        self.assertEqual(mp3_progress, sorted(set(mp3_progress)))
+        self.assertEqual(mp3_progress[-1], 99)

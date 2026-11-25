@@ -14,7 +14,7 @@ from urllib.parse import unquote, urlencode, urlsplit
 
 from filelock import FileLock
 
-from jamly import companion, config, core, server
+from jamly import companion, config, core, run, server
 from jamly.outputs import PROCESSING_VERSION, checksum
 from jamly.run import ItemResult
 from jamly.watch_queue import QueueError, WatchQueue
@@ -312,27 +312,104 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(state["jobs"][0]["model"], "htdemucs_ft")
 
     def test_stage_progress_and_original_source_reach_worker(self):
-        started, release = threading.Event(), threading.Event()
+        stage_ready, release = threading.Event(), threading.Event()
+        next_step, done_step = threading.Event(), threading.Event()
         seen = []
 
         def process(wid, args, *, progress, source_url, cancel_event):
             seen.append(source_url)
-            progress(wid, "separate", 0, 0)
-            started.set()
+            progress(wid, "download", 50, 100)
+            progress(wid, "separate", 35, 100)
+            stage_ready.set()
+            next_step.wait(timeout=3)
+            # Lower sub-progress (e.g. retry or reset) must never move overall_progress backwards.
+            progress(wid, "separate", 10, 100)
+            progress(wid, "mix", 50, 100)
+            done_step.set()
             release.wait(timeout=3)
             return ItemResult(wid, status="done")
+
         self.start(process)
         self.request("POST", "/add", {"inputs": [self.source]})
         try:
-            self.assertTrue(started.wait(3))
+            self.assertTrue(stage_ready.wait(3))
             state = self.request("GET", "/status")[1]
             self.assertEqual(state["current"]["stage"], "separate")
             self.assertEqual(state["current"]["status"], "running")
+            self.assertEqual(state["current"]["progress"], 35)
+            self.assertEqual(state["current"]["overall_progress"], 41)
+            next_step.set()
+            self.assertTrue(done_step.wait(3))
+            state = self.request("GET", "/status")[1]
+            self.assertEqual(state["current"]["stage"], "mix")
+            self.assertEqual(state["current"]["progress"], 50)
+            self.assertEqual(state["current"]["overall_progress"], 94)
         finally:
+            next_step.set()
             release.set()
         state = self.wait_for(lambda state: state["done"] == 1)
         self.assertIsNone(state["current"])
         self.assertEqual(seen, [self.source])
+        self.assertEqual(server._overall_progress("metadata", None, is_local=False), 0)
+        self.assertEqual(server._overall_progress("download", 50, is_local=False), 10)
+        self.assertEqual(server._overall_progress("separate", 0, is_local=True), 5)
+        self.assertEqual(server._overall_progress("separate", 100, is_local=True), 90)
+        self.assertEqual(server._overall_progress("publish", None, is_local=False), 98)
+
+    def test_retry_preserves_primary_outputs_and_legacy_invalid_source_does_not_kill_worker(self):
+        retry_started, release_retry = threading.Event(), threading.Event()
+        calls = 0
+
+        def process(wid, args, *, progress, source_url, cancel_event):
+            nonlocal calls
+            calls += 1
+            if wid == "legacy00001":
+                return run.process_one(wid, args, progress=progress, source_url=source_url, cancel_event=cancel_event)
+            if calls == 1:
+                out_dir = Path(args.output_dir) / ".jamly" / wid / args.model / args.audio_format
+                out_dir.mkdir(parents=True, exist_ok=True)
+                drums = Path(args.output_dir) / (wid + "_drums.wav")
+                no_drums = Path(args.output_dir) / (wid + "_no_drums.wav")
+                drums.write_bytes(b"drums")
+                no_drums.write_bytes(b"no-drums")
+                return ItemResult(
+                    wid, title="Track", status="done", generation="gen-primary",
+                    stem_paths={"drums": str(drums), "no_drums": str(no_drums)},
+                )
+            progress(wid, "separate", 25, 100)
+            retry_started.set()
+            release_retry.wait(timeout=3)
+            return ItemResult(wid, status="cancelled", error="cancelled")
+
+        self.start(process)
+        self.request("POST", "/add", {"inputs": [self.source]})
+        done_state = self.wait_for(lambda s: s["done"] == 1)
+        self.assertEqual(len(done_state["jobs"][0]["outputs"]), 2)
+        self.assertEqual(done_state["jobs"][0]["exports"], [])
+
+        # Retrying a completed job keeps its primary export in outputs (not demoted to secondary exports).
+        self.request("POST", "/retry/" + self.wid, {})
+        try:
+            self.assertTrue(retry_started.wait(3))
+            retrying_state = self.request("GET", "/status")[1]
+            retrying_job = retrying_state["jobs"][0]
+            self.assertEqual(retrying_job["status"], "running")
+            self.assertEqual(len(retrying_job["outputs"]), 2)
+            self.assertEqual(retrying_job["exports"], [])
+        finally:
+            release_retry.set()
+        self.wait_for(lambda s: s["jobs"][0]["status"] == "cancelled")
+
+        # A legacy queue record whose source_url fails local_audio_path must error cleanly without killing the worker.
+        with self.app._status_lock:
+            self.app._commit(lambda q: q.add("legacy00001", source_url=str(self.root / "legacy_original.txt")))
+        self.app._wake.set()
+        state = self.wait_for(lambda s: s["failed"] == 1)
+        self.assertIsNone(state["error"])
+        self.assertIsNone(state["current"])
+        legacy_job = next(j for j in state["jobs"] if j["watch_id"] == "legacy00001")
+        self.assertEqual(legacy_job["status"], "error")
+        self.assertIn("Unsupported local audio file extension", legacy_job["error"])
 
     def test_local_source_audio_is_streamed_with_range_support_after_completion(self):
         with tempfile.TemporaryDirectory() as folder:
