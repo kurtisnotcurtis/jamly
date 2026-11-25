@@ -4,6 +4,10 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.5.0] - 2026-11-24
+
 ### Added
 - **Thin bottom progress bar on active Exports cards.** Stream real download byte progress (`yt-dlp --progress-template`) and per-stem mix/encode/peak-check progress alongside separation chunk progress, expose monotonic weighted `overall_progress` on `/status`, and render a subtle animated 4px bottom progress bar in the companion UI with in-place DOM updates across polls (`src/jamly/core.py`, `src/jamly/run.py`, `src/jamly/audio.py`, `src/jamly/server.py`, `src/jamly/web/app.js`, `src/jamly/web/app.css`).
 
