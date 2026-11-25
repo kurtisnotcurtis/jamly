@@ -4,7 +4,8 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+- **Use absolute URLs for the logo and doc links in `README.md`.** Point the header logo to `https://kurtisnotcurtis.github.io/jamly/jamly-mark.svg` and relative doc links to GitHub blob URLs so the logo and links render properly on PyPI (`README.md`).
 
 ## [0.5.0] - 2026-11-24
 
