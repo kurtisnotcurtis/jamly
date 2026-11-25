@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="site/jamly-mark.svg" alt="Jamly Logo" width="84" height="84" />
+  <img src="https://kurtisnotcurtis.github.io/jamly/jamly-mark.svg" alt="Jamly Logo" width="84" height="84" />
 </p>
 
 <h1 align="center">Jamly</h1>
@@ -8,7 +8,7 @@
   <a href="https://kurtisnotcurtis.github.io/jamly/">Website &amp; Setup Guide</a> ·
   <a href="https://github.com/kurtisnotcurtis/jamly/releases">Download Releases</a> ·
   <a href="https://pypi.org/project/jamly-audio-sep/">PyPI</a> ·
-  <a href="DESIGN.md">Architecture (DESIGN.md)</a>
+  <a href="https://github.com/kurtisnotcurtis/jamly/blob/main/DESIGN.md">Architecture (DESIGN.md)</a>
 </p>
 
 Split any song or video into isolated **drums** and **drumless** practice tracks—or **karaoke** (`vocals` + `no_vocals`), **bass**, **guitar**, **piano**, or **all individual stems**—100% locally on your computer.
@@ -94,7 +94,7 @@ Re-running a track with a new preset or format keeps your earlier exports intact
 
 ## Processing pipeline
 
-Jamly runs every input (companion UI, CLI, or browser extension) through the same local separation pipeline. See **[Processing Pipeline](PROCESSING-PIPELINE.md)** for the full flow from input normalization and smart-cache reuse through Demucs separation to the written manifest.
+Jamly runs every input (companion UI, CLI, or browser extension) through the same local separation pipeline. See **[Processing Pipeline](https://github.com/kurtisnotcurtis/jamly/blob/main/PROCESSING-PIPELINE.md)** for the full flow from input normalization and smart-cache reuse through Demucs separation to the written manifest.
 
 ---
 
@@ -250,7 +250,7 @@ git push origin main --tags
 python tools/version.py --check --tag v0.3.0
 ```
 
-Tag `vX.Y.Z` must match the package version; PyPI publishing triggers on `v*` tags. See [DESIGN.md](DESIGN.md) for release versioning details and [AGENTS.md](AGENTS.md) for contributor guidelines.
+Tag `vX.Y.Z` must match the package version; PyPI publishing triggers on `v*` tags. See [DESIGN.md](https://github.com/kurtisnotcurtis/jamly/blob/main/DESIGN.md) for release versioning details and [AGENTS.md](https://github.com/kurtisnotcurtis/jamly/blob/main/AGENTS.md) for contributor guidelines.
 
 ### Building native desktop archives
 
@@ -263,7 +263,7 @@ uv run --no-sync python tools/build_companion.py
 uv run --no-sync python tools/bundle_smoke.py --real-models
 ```
 
-See [DESIGN.md](DESIGN.md) for architecture, security boundaries, and release versioning details, and [AGENTS.md](AGENTS.md) for contributor guidelines.
+See [DESIGN.md](https://github.com/kurtisnotcurtis/jamly/blob/main/DESIGN.md) for architecture, security boundaries, and release versioning details, and [AGENTS.md](https://github.com/kurtisnotcurtis/jamly/blob/main/AGENTS.md) for contributor guidelines.
 
 </details>
 
@@ -271,6 +271,6 @@ See [DESIGN.md](DESIGN.md) for architecture, security boundaries, and release ve
 
 ## License
 
-Jamly is licensed under the [MIT License](LICENSE.md), covering the `jamly` application code (`src/jamly/`) and browser extension/userscript assets (`browser/`). Third-party runtime dependencies—including Demucs (`htdemucs`), PyTorch, `ffmpeg`/`ffprobe`, `yt-dlp`, Deno, and bundled native libraries—retain their own licenses.
+Jamly is licensed under the [MIT License](https://github.com/kurtisnotcurtis/jamly/blob/main/LICENSE.md), covering the `jamly` application code (`src/jamly/`) and browser extension/userscript assets (`browser/`). Third-party runtime dependencies—including Demucs (`htdemucs`), PyTorch, `ffmpeg`/`ffprobe`, `yt-dlp`, Deno, and bundled native libraries—retain their own licenses.
 
 *Only download or process media you are authorized to use, and follow the source site's terms of service.*
