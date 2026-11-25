@@ -174,10 +174,8 @@
       "M15 16a3 3 0 1 0 6 0a3 3 0 1 0 -6 0",
       "M2.5 21.5l19-19",
     ],
-    wave: [
-      "M2 12s1.5-3 4.5-3 4 3 4 3 1-3 4.5-3 4.5 3 4.5 3",
-      "M2 6s1.5-3 4.5-3 4 3 4 3 1-3 4.5-3 4.5 3 4.5 3",
-      "M2 18s1.5-3 4.5-3 4 3 4 3 1-3 4.5-3 4.5 3 4.5 3",
+    play: [
+      "M7 5l12 7-12 7z",
     ],
     folder: [
       "M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
@@ -204,9 +202,6 @@
     clear: [
       "M18 6L6 18",
       "M6 6l12 12",
-    ],
-    stop: [
-      "M6 6h12v12H6z",
     ],
   };
 
@@ -410,6 +405,7 @@
       case "aac": return "audio/aac";
       case "aiff":
       case "aif": return "audio/aiff";
+      case "webm": return "audio/webm";
       default: return "audio/mpeg";
     }
   }
@@ -430,7 +426,7 @@
       const parsed = new URL(source);
       if (parsed.protocol === "http:" || parsed.protocol === "https:") {
         const link = document.createElement("a");
-        link.className = "icon-btn";
+        link.className = "source-link";
         link.href = parsed.href;
         link.target = "_blank";
         link.rel = "noopener noreferrer";
@@ -443,9 +439,11 @@
       // Local filesystem paths are opened via the backend folder opener.
     }
     if (source === job.watch_id) return null;
-    return iconButton("file", "Show source file folder", () => post("/app/open-folder", {
+    const btn = iconButton("file", "Show source file folder", () => post("/app/open-folder", {
       id: job.watch_id, target: "source",
     }));
+    btn.className = "source-link";
+    return btn;
   }
 
   const player = {
@@ -483,9 +481,9 @@
   function buildToggle(entry) {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "player-toggle";
+    button.className = entry.kind === "source" ? "player-toggle player-toggle-primary" : "player-toggle";
     button.dataset.url = entry.key;
-    const iconKey = entry.kind === "source" ? "wave" : stemIconKey(entry.stemKind);
+    const iconKey = entry.kind === "source" ? "play" : stemIconKey(entry.stemKind);
     button.appendChild(svgIcon(iconKey));
     button.setAttribute("aria-label", entry.label);
     return button;
@@ -532,6 +530,7 @@
     player.controller?.abort();
     const controller = new AbortController();
     player.controller = controller;
+    player.jobId = job.watch_id;
     byId("player").hidden = false;
     document.body.classList.add("has-player");
     byId("player-title").textContent = job.title || job.watch_id;
@@ -653,6 +652,73 @@
     }
   }
 
+  const STAGE_PROGRESS_BOUNDS = {
+    metadata: [0, 4],
+    download: [4, 15],
+    separate: [15, 90],
+    mix: [90, 98],
+    publish: [98, 100],
+  };
+
+  function resolveOverallProgress(current) {
+    if (!current || current.cancelling) return null;
+    if (typeof current.overall_progress === "number" && Number.isFinite(current.overall_progress)) {
+      const clamped = Math.max(0, Math.min(100, Math.round(current.overall_progress)));
+      if (clamped === 0 && current.stage === "metadata" && typeof current.progress !== "number") {
+        return null;
+      }
+      return clamped;
+    }
+    const bounds = STAGE_PROGRESS_BOUNDS[current.stage];
+    if (!bounds) return null;
+    const [start, end] = bounds;
+    if (typeof current.progress !== "number" || !Number.isFinite(current.progress)) {
+      return start > 0 ? Math.round(start) : null;
+    }
+    const fraction = Math.max(0, Math.min(100, current.progress)) / 100;
+    return Math.round(start + (end - start) * fraction);
+  }
+
+  function applyProgressBar(bar, current) {
+    const fill = bar.firstElementChild;
+    const isCancelling = Boolean(current?.cancelling);
+    const pct = resolveOverallProgress(current);
+    const indeterminate = pct === null;
+    bar.classList.toggle("cancelling", isCancelling);
+    bar.classList.toggle("indeterminate", indeterminate && !isCancelling);
+    bar.setAttribute("role", "progressbar");
+    bar.setAttribute("aria-valuemin", "0");
+    bar.setAttribute("aria-valuemax", "100");
+    if (indeterminate) {
+      bar.removeAttribute("aria-valuenow");
+      bar.setAttribute("aria-label", isCancelling ? "Cancelling export" : "Export in progress");
+      bar.dataset.progress = isCancelling ? "cancelling" : "indeterminate";
+      if (fill) fill.style.width = "";
+    } else {
+      bar.setAttribute("aria-valuenow", String(pct));
+      bar.setAttribute("aria-label", `Export progress: ${pct}%`);
+      bar.dataset.progress = String(pct);
+      if (fill) fill.style.width = `${pct}%`;
+    }
+  }
+
+  function updateBadgeContent(badge, stage, progressText) {
+    const iconName = STAGE_ICONS[stage] || "";
+    if (badge.dataset.icon !== iconName) {
+      badge.dataset.icon = iconName;
+      const existingIcon = badge.querySelector(".status-icon");
+      if (existingIcon) existingIcon.remove();
+      if (iconName) badge.prepend(statusIcon(iconName));
+    }
+    let label = badge.querySelector(".status-badge-label");
+    if (!label) {
+      label = document.createElement("span");
+      label.className = "status-badge-label";
+      badge.appendChild(label);
+    }
+    label.textContent = (stages[stage] || stage) + progressText;
+  }
+
   function updateLiveElapsedTimes(status) {
     for (const el of document.querySelectorAll("#jobs .job-times[data-watch-id]")) {
       const job = status.jobs.find(item => item.watch_id === el.dataset.watchId);
@@ -663,8 +729,24 @@
     }
   }
 
+  function updateLiveProgress(status) {
+    if (!status.current) return;
+    const wid = status.current.watch_id;
+    const row = Array.from(byId("jobs").children).find(item => item.dataset.watchId === wid);
+    if (!row) return;
+    const isCancelling = Boolean(status.current.cancelling);
+    const stage = isCancelling ? "cancelling" : status.current.stage;
+    const progressText = !isCancelling && typeof status.current.progress === "number"
+      ? ` ${status.current.progress}%` : "";
+    const badge = row.querySelector(".status-badge");
+    if (badge) updateBadgeContent(badge, stage, progressText);
+    const bar = row.querySelector(".job-progress");
+    if (bar) applyProgressBar(bar, status.current);
+  }
+
   function renderJobRow(job, status) {
     const row = document.createElement("li");
+    row.dataset.watchId = job.watch_id;
     const main = document.createElement("div");
     main.className = "job-main";
     const info = document.createElement("div");
@@ -672,6 +754,8 @@
     const title = document.createElement("p");
     title.className = "job-title";
     title.textContent = job.title || job.watch_id;
+    const sourceBtn = sourceControl(job);
+    if (sourceBtn) title.appendChild(sourceBtn);
     info.appendChild(title);
     const isCurrent = status.current?.watch_id === job.watch_id;
     const isCancelling = isCurrent && Boolean(status.current?.cancelling);
@@ -683,11 +767,9 @@
         ? "active"
         : (job.status === "cancelled" ? "muted" : "error"));
     badge.className = `status-badge ${badgeTone}`;
-    const iconName = STAGE_ICONS[stage];
-    if (iconName) badge.appendChild(statusIcon(iconName));
     const progressText = isCurrent && !isCancelling && typeof status.current?.progress === "number"
       ? ` ${status.current.progress}%` : "";
-    badge.appendChild(document.createTextNode((stages[stage] || stage) + progressText));
+    updateBadgeContent(badge, stage, progressText);
     const detail = document.createElement("div");
     detail.className = "job-detail";
     const model = models.find(choice => choice.id === job.model)?.label || job.model;
@@ -729,48 +811,55 @@
     }
     const controls = document.createElement("div");
     controls.className = "job-controls";
-    const topRow = document.createElement("div");
-    topRow.className = "control-row";
-    const bottomRow = document.createElement("div");
-    bottomRow.className = "control-row";
-    const sourceBtn = sourceControl(job);
-    if (sourceBtn) topRow.appendChild(sourceBtn);
-    if (hasOutputs) {
-      topRow.appendChild(iconButton("folder", "Show files in folder", () => post("/app/open-folder", {
-        id: job.watch_id,
-      })));
-    }
-    if (["pending", "running"].includes(job.status)) {
+    const controlRow = document.createElement("div");
+    controlRow.className = "control-row";
+    const isTerminal = !["pending", "running"].includes(job.status);
+    if (!isTerminal) {
       const cancelBtn = document.createElement("button");
       cancelBtn.type = "button";
-      cancelBtn.className = "toolbar-btn cancel-btn";
+      cancelBtn.className = "icon-btn cancel-btn";
       cancelBtn.disabled = isCancelling;
       cancelBtn.title = isCancelling ? "Cancelling processing" : "Cancel processing";
       cancelBtn.setAttribute("aria-label", cancelBtn.title);
-      const label = document.createElement("span");
-      label.textContent = isCancelling ? "Cancelling..." : "Cancel";
-      cancelBtn.append(svgIcon("stop"), label);
+      cancelBtn.appendChild(svgIcon("clear"));
       cancelBtn.addEventListener("click", () => action(cancelBtn, async () => {
         await jamlyClient.cancel(config, job.watch_id);
         await refresh();
       }));
-      bottomRow.appendChild(cancelBtn);
-    } else {
-      bottomRow.appendChild(iconButton("retry", "Retry / check files", async () => {
+      controlRow.appendChild(cancelBtn);
+    } else if (!["done", "skipped"].includes(job.status)) {
+      controlRow.appendChild(iconButton("retry", "Retry / check files", async () => {
         await jamlyClient.retry(config, job.watch_id, byId("replace").checked);
         await refresh();
       }));
-      bottomRow.appendChild(iconButton("clear", "Remove from list", async () => {
-        await post("/app/clear", { id: job.watch_id });
-        await refresh();
-      }, "danger"));
     }
-    for (const controlRow of [topRow, bottomRow]) {
-      if (controlRow.childElementCount) controls.appendChild(controlRow);
-    }
+    if (controlRow.childElementCount) controls.appendChild(controlRow);
     if (controls.childElementCount) actions.appendChild(controls);
     if (actions.childElementCount) main.appendChild(actions);
     row.appendChild(main);
+    if (isTerminal) {
+      row.classList.add("has-dismiss");
+      const dismissBtn = document.createElement("button");
+      dismissBtn.type = "button";
+      dismissBtn.className = "job-dismiss";
+      dismissBtn.title = "Remove from list";
+      dismissBtn.setAttribute("aria-label", "Remove from list");
+      dismissBtn.appendChild(svgIcon("clear"));
+      dismissBtn.addEventListener("click", () => action(dismissBtn, async () => {
+        await post("/app/clear", { id: job.watch_id });
+        await refresh();
+      }));
+      row.appendChild(dismissBtn);
+    }
+    if (isCurrent) {
+      const bar = document.createElement("div");
+      bar.className = "job-progress";
+      const fill = document.createElement("div");
+      fill.className = "job-progress-fill";
+      bar.appendChild(fill);
+      applyProgressBar(bar, status.current);
+      row.appendChild(bar);
+    }
     return row;
   }
 
@@ -823,12 +912,16 @@
     }
     const renderKey = JSON.stringify({
       jobs: status.jobs,
-      current: status.current,
+      currentWatchId: status.current?.watch_id || null,
+      currentCancelling: Boolean(status.current?.cancelling),
       pagination: status.pagination,
       error: status.error,
     });
     if (renderKey === lastRenderKey) {
-      if (status.current) updateLiveElapsedTimes(status);
+      if (status.current) {
+        updateLiveElapsedTimes(status);
+        updateLiveProgress(status);
+      }
       refreshSelectionState();
       return;
     }
@@ -1018,6 +1111,11 @@
     byId("player-speed").value = "100";
     applyPlaybackRate();
   });
+  byId("player-open-folder")?.appendChild(svgIcon("folder"));
+  byId("player-open-folder")?.addEventListener("click", () => action(byId("player-open-folder"), () => {
+    if (!player.jobId) return;
+    return post("/app/open-folder", { id: player.jobId });
+  }));
   byId("player-close").addEventListener("click", closePlayer);
   for (const eventName of ["play", "pause", "ended"]) {
     byId("player-audio").addEventListener(eventName, refreshSelectionState);

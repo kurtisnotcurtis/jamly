@@ -77,7 +77,15 @@ def build_download_cmd(ytdlp_exe, watch_id: str, workdir: str,
         ffmpeg_dir,
     )
     index = cmd.index("--")
-    return cmd[:index] + ["--no-simulate", "--print", "after_move:JAMLY_FILE:%(filepath)j"] + cmd[index:]
+    progress_args = [
+        "--progress",
+        "--progress-template",
+        "download:JAMLY_DOWNLOAD:%(progress.downloaded_bytes)s:%(progress.total_bytes)s:%(progress.total_bytes_estimate)s",
+        "--no-simulate",
+        "--print",
+        "after_move:JAMLY_FILE:%(filepath)j",
+    ]
+    return cmd[:index] + progress_args + cmd[index:]
 
 
 def _fetch_item_metadata(ytdlp_exe, source_url: str, cancel_event=None) -> dict:
@@ -183,13 +191,46 @@ def _fetch_local_metadata(ffprobe_exe: str, path: Path, cancel_event=None) -> di
     return metadata
 
 
+def _parse_download_progress(line: str) -> int | None:
+    stripped = line.strip()
+    if not stripped.startswith("JAMLY_DOWNLOAD:"):
+        return None
+    parts = stripped.removeprefix("JAMLY_DOWNLOAD:").split(":")
+    if len(parts) < 2:
+        return None
+    try:
+        downloaded = float(parts[0])
+    except ValueError:
+        return None
+    total = None
+    for raw in parts[1:3]:
+        try:
+            candidate = float(raw)
+        except ValueError:
+            continue
+        if candidate > 0:
+            total = candidate
+            break
+    if not total or downloaded < 0:
+        return None
+    return max(1, min(99, int(round(downloaded / total * 100))))
+
+
 def download_audio(command: list[str], workdir: Path, cancel_event=None, *,
-                   timeout: float | None = DOWNLOAD_TIMEOUT) -> Path:
+                   timeout: float | None = DOWNLOAD_TIMEOUT, on_progress=None) -> Path:
     outputs = []
+    last_percent = -1
 
     def on_line(line):
+        nonlocal last_percent
         if line.startswith("JAMLY_FILE:"):
             outputs.append(Path(json.loads(line.removeprefix("JAMLY_FILE:"))).resolve())
+            return
+        if on_progress is not None:
+            pct = _parse_download_progress(line)
+            if pct is not None and pct > last_percent:
+                last_percent = pct
+                on_progress(pct)
 
     result = _run(command, stream=True, on_line=on_line, cancel_event=cancel_event, timeout=timeout)
     # yt-dlp's single-download limit may terminate with 101 after a successful transfer.
@@ -407,11 +448,17 @@ def _stage_and_publish(wid: str, args, *, source: str, local_source: Path | None
         workdir, staged_dir = Path(work), Path(staged)
         stage("download")
         source_fingerprint = _local_source_fingerprint(local_source) if local_source is not None else None
-        audio = (
-            local_source if local_source is not None else download_audio(
-                build_download_cmd(command, wid, work, source, ffmpeg_dir), workdir, cancel_event
-            )
-        )
+        if local_source is not None:
+            audio = local_source
+        else:
+            dl_cmd = build_download_cmd(command, wid, work, source, ffmpeg_dir)
+            if progress is not None:
+                audio = download_audio(
+                    dl_cmd, workdir, cancel_event,
+                    on_progress=lambda pct: progress(wid, "download", pct, 100),
+                )
+            else:
+                audio = download_audio(dl_cmd, workdir, cancel_event)
         stage("separate")
         stems = separate_stems(
             str(audio), work, args.threads,
@@ -423,8 +470,11 @@ def _stage_and_publish(wid: str, args, *, source: str, local_source: Path | None
         destinations, meta = stem_destination_paths(
             staged, wid, args.audio_format, parsed, stem=stem, model=model
         )
-        audio_info = render_pair(stems, workdir, destinations, args.audio_format,
-                                 ffmpeg, cancel_event, target_stem=stem)
+        audio_info = render_pair(
+            stems, workdir, destinations, args.audio_format,
+            ffmpeg, cancel_event, target_stem=stem,
+            on_progress=(lambda pct: progress(wid, "mix", pct, 100)) if progress else None,
+        )
         orig_target = None
         if local_source is None:
             orig_ext = audio.suffix.lower() or "." + args.audio_format

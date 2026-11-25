@@ -159,7 +159,10 @@
           <p id="player-stem" class="player-stem" role="status"></p>
         </div>
         <div id="player-toggles" class="player-toggles" role="group" aria-label="Playable sources"></div>
-        <button id="player-close" type="button" class="icon-btn" title="Close player" aria-label="Close player">&times;</button>
+        <div class="player-actions">
+          <button id="player-open-folder" type="button" class="icon-btn" title="Show files in folder" aria-label="Show files in folder"></button>
+          <button id="player-close" type="button" class="icon-btn" title="Close player" aria-label="Close player">&times;</button>
+        </div>
       </div>
       <div class="player-controls">
         <audio id="player-audio" controls preload="auto"></audio>

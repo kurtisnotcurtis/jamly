@@ -78,7 +78,7 @@ def _start_stream_reader(process: subprocess.Popen, tail: deque, errors: list, o
         try:
             for line in process.stdout:
                 tail.append(line)
-                if not line.startswith("JAMLY_PROGRESS:"):
+                if not line.startswith(("JAMLY_PROGRESS:", "JAMLY_DOWNLOAD:")):
                     sys.stdout.write(line)
                     sys.stdout.flush()
                 if on_line is not None:

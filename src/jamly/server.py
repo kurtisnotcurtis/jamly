@@ -25,7 +25,7 @@ from .models import (
     ALL_OUTPUT_KINDS, AUDIO_FORMATS, DEFAULT_AUDIO_FORMAT, DEFAULT_MODEL, DEFAULT_STEM,
     model_choices, stem_choices, validate_audio_format, validate_model, validate_stem,
 )
-from .normalize import is_valid_stable_id, make_input
+from .normalize import InputError, is_valid_stable_id, local_audio_path, make_input
 from .outputs import audio_directory, read_manifest, resolve_manifest_original, resolve_output_path
 from .run import ItemResult, process_one
 from .runtime import open_directory
@@ -48,10 +48,17 @@ def _port(value: str) -> int:
     return port
 
 
+def _is_http_url(raw: str) -> bool:
+    try:
+        return urlsplit(raw).scheme.lower() in ("http", "https")
+    except ValueError:
+        return False
+
+
 def _upload_path(raw: str | None, uploads_root: Path) -> Path | None:
     if not isinstance(raw, str) or not raw.strip():
         return None
-    if urlsplit(raw).scheme.lower() in ("http", "https"):
+    if _is_http_url(raw):
         return None
     candidate = Path(raw)
     if not candidate.is_absolute():
@@ -129,6 +136,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-tray", action="store_true",
                         help="Disable the desktop system tray icon")
     return parser
+
+
+_STAGE_BOUNDS_URL = {
+    "metadata": (0.0, 4.0),
+    "download": (4.0, 15.0),
+    "separate": (15.0, 90.0),
+    "mix": (90.0, 98.0),
+    "publish": (98.0, 100.0),
+}
+_STAGE_BOUNDS_LOCAL = {
+    "metadata": (0.0, 3.0),
+    "download": (3.0, 5.0),
+    "separate": (5.0, 90.0),
+    "mix": (90.0, 98.0),
+    "publish": (98.0, 100.0),
+}
+
+
+def _overall_progress(stage: str, stage_progress: int | None, *, is_local: bool = False) -> int | None:
+    bounds = (_STAGE_BOUNDS_LOCAL if is_local else _STAGE_BOUNDS_URL).get(stage)
+    if bounds is None:
+        return None
+    start, end = bounds
+    if stage_progress is None:
+        return int(round(start))
+    fraction = max(0, min(100, int(stage_progress))) / 100.0
+    return int(round(start + (end - start) * fraction))
 
 
 class _HTTPServer(ThreadingHTTPServer):
@@ -450,7 +484,7 @@ class ItemServer:
                     source = (item or {}).get("source_url")
                     if not source:
                         raise ValueError("This job has no recorded source")
-                    if urlsplit(source).scheme.lower() in ("http", "https"):
+                    if _is_http_url(source):
                         raise ValueError("Remote URLs do not have a local source folder")
                     source_path = Path(source)
                     if not source_path.exists():
@@ -583,6 +617,10 @@ class ItemServer:
                 return False
             item = pending[0]
             wid = item["watch_id"]
+            try:
+                is_local = local_audio_path(item["source_url"]) is not None
+            except (InputError, ValueError):
+                is_local = False
             cancel_event = threading.Event()
             self._current_cancel = cancel_event
             self._cancelled_ids.discard(wid)
@@ -590,13 +628,19 @@ class ItemServer:
             running = self.queue.get(wid) or {}
             self._current = {"watch_id": wid, "stage": "metadata", "status": "running",
                              "title": item.get("title"), "error": None, "progress": None,
+                             "overall_progress": 0,
                              "started_at": running.get("started_at"), "cancelling": False}
 
         def progress(_wid, stage, index, total):
+            stage_pct = max(0, min(100, int(index))) if total else None
+            overall = _overall_progress(stage, stage_pct, is_local=is_local)
             with self._status_lock:
                 if self._current:
                     self._current["stage"] = stage
-                    self._current["progress"] = int(index) if total else None
+                    self._current["progress"] = stage_pct
+                    if overall is not None:
+                        prev = self._current.get("overall_progress") or 0
+                        self._current["overall_progress"] = max(prev, overall)
 
         try:
             result = process_one(
@@ -615,12 +659,14 @@ class ItemServer:
                 status, error = "cancelled", None
             else:
                 status, error = result.status, result.error
-            self._commit(lambda queue: queue.finish(
-                wid, status, error=error,
-                title=result.title, outputs=result.outputs, generation=result.generation,
-                original_path=result.source_path,
-            ))
-            self._current = None
+            try:
+                self._commit(lambda queue: queue.finish(
+                    wid, status, error=error,
+                    title=result.title, outputs=result.outputs, generation=result.generation,
+                    original_path=result.source_path,
+                ))
+            finally:
+                self._current = None
         return True
 
     def _loop(self):
@@ -717,10 +763,21 @@ class ItemServer:
         record["stem"] = item.get("options", {}).get("stem", DEFAULT_STEM)
         record["audio_format"] = item.get("options", {}).get("audio_format", "mp3")
         active_generation = None
+        exports_map = item.get("exports") or {}
         if item["status"] in ("done", "skipped") and item.get("generation"):
             active_generation = item["generation"]
             record["outputs"] = cls._serialize_outputs(item["watch_id"], item.get("outputs", {}), active_generation)
-        for exp in (item.get("exports") or {}).values():
+        else:
+            primary_key = WatchQueue._export_key(record["model"], record["stem"], record["audio_format"])
+            primary_export = exports_map.get(primary_key)
+            if isinstance(primary_export, dict) and primary_export.get("generation"):
+                primary_outputs = cls._serialize_outputs(
+                    item["watch_id"], primary_export.get("outputs", {}), primary_export["generation"]
+                )
+                if primary_outputs:
+                    active_generation = primary_export["generation"]
+                    record["outputs"] = primary_outputs
+        for exp in exports_map.values():
             gen = exp.get("generation")
             if not gen or gen == active_generation:
                 continue

@@ -74,6 +74,33 @@ class MetadataTests(unittest.TestCase):
             with patch.object(run, "_run", side_effect=fake_run):
                 self.assertEqual(run.download_audio(["yt-dlp"], workdir), downloaded.resolve())
 
+    def test_download_audio_reports_monotonic_progress(self):
+        cmd = run.build_download_cmd("yt-dlp", "vid123", "/tmp/work", "https://example.test/v")
+        self.assertIn("--progress", cmd)
+        self.assertIn("--progress-template", cmd)
+        with tempfile.TemporaryDirectory() as root:
+            workdir = Path(root)
+            downloaded = workdir / "track.wav"
+            downloaded.write_bytes(b"RIFF")
+            reported = []
+
+            def fake_run(_cmd, *, on_line=None, **_kwargs):
+                for line in (
+                    "JAMLY_DOWNLOAD:NA:NA:NA\n",
+                    "JAMLY_DOWNLOAD:250:1000:NA\n",
+                    "JAMLY_DOWNLOAD:200:1000:NA\n",
+                    "JAMLY_DOWNLOAD:500:NA:1000\n",
+                    "JAMLY_DOWNLOAD:1000:1000:1000\n",
+                    "JAMLY_FILE:" + json.dumps(str(downloaded)) + "\n",
+                ):
+                    on_line(line)
+                return RunResult([], 0, "", "")
+
+            with patch.object(run, "_run", side_effect=fake_run):
+                result = run.download_audio(["yt-dlp"], workdir, on_progress=reported.append)
+            self.assertEqual(result, downloaded.resolve())
+            self.assertEqual(reported, [25, 50, 99])
+
 
 class PipelineTests(unittest.TestCase):
     def setUp(self):
@@ -99,7 +126,7 @@ class PipelineTests(unittest.TestCase):
         ):
             self.patches.enter_context(patch.object(run, target, side_effect=replacement))
 
-    def download(self, _command, workdir, _cancel):
+    def download(self, _command, workdir, _cancel, **_kwargs):
         path = workdir / "source.wav"
         sf.write(path, np.zeros((100, 2)), 44100, subtype="FLOAT")
         return path
@@ -117,9 +144,21 @@ class PipelineTests(unittest.TestCase):
 
     def test_complete_pair_has_manifest_and_live_stages(self):
         stages = []
-        result = self.process(progress=lambda _id, stage, *_args: stages.append(stage))
+        mix_progress = []
+
+        def record(_id, stage, index, total):
+            if total == 0:
+                stages.append(stage)
+            elif stage == "mix":
+                mix_progress.append(index)
+
+        result = self.process(progress=record)
         self.assertEqual(result.status, "done", result.error)
         self.assertEqual(stages, ["metadata", "download", "separate", "mix", "publish"])
+        self.assertTrue(mix_progress)
+        self.assertEqual(mix_progress, sorted(set(mix_progress)))
+        self.assertGreaterEqual(mix_progress[0], 1)
+        self.assertLessEqual(mix_progress[-1], 99)
         directory = Path(result.meta_path).parent
         self.assertEqual(Path(result.outputs["drums"]).parent, self.root / "output")
         self.assertEqual(directory, self.root / "output" / ".jamly" / self.wid / "htdemucs" / "wav")

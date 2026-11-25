@@ -39,6 +39,8 @@ def _is_loopback_host(host: str) -> bool:
 
 
 def _audio_content_type(name: str, default: str = "audio/mpeg") -> str:
+    if name.lower().endswith(".webm"):
+        return "audio/webm"
     content_type = mimetypes.guess_type(name)[0] or default
     # Windows and Linux disagree on the WAV MIME type (audio/wav vs audio/x-wav); serve
     # the canonical value so clients get a consistent Content-Type regardless of host.

@@ -39,7 +39,7 @@ def _open_matching_stems(stack: ExitStack, stems: dict[str, str],
 
 
 def mix_pair(stems: dict[str, str], workdir: Path, cancel_event=None, *,
-             target_stem: str = "drums") -> tuple[dict, dict]:
+             target_stem: str = "drums", on_progress=None) -> tuple[dict, dict]:
     _validate_stems(stems, target_stem)
     export_all = target_stem == "all"
     complement = "no_" + target_stem
@@ -52,8 +52,11 @@ def mix_pair(stems: dict[str, str], workdir: Path, cancel_event=None, *,
         }
     )
     peak = 0.0
+    processed = 0
+    last_percent = -1
     with ExitStack() as stack:
         inputs, shape = _open_matching_stems(stack, stems, None if export_all else target_stem)
+        total_frames = shape[0]
         outputs = (
             None if export_all else {
                 name: stack.enter_context(sf.SoundFile(
@@ -65,7 +68,8 @@ def mix_pair(stems: dict[str, str], workdir: Path, cancel_event=None, *,
             check_cancelled(cancel_event)
             blocks = {name: file.read(BLOCK_FRAMES, dtype="float64", always_2d=True)
                       for name, file in inputs.items()}
-            if not len(next(iter(blocks.values()))):
+            block_len = len(next(iter(blocks.values())))
+            if not block_len:
                 break
             if not all(np.isfinite(block).all() for block in blocks.values()):
                 raise ValueError("The separator produced non-finite samples")
@@ -76,6 +80,12 @@ def mix_pair(stems: dict[str, str], workdir: Path, cancel_event=None, *,
                 peak = max(peak, float(np.abs(blocks[target_stem]).max()), float(np.abs(backing).max()))
                 outputs[target_stem].write(blocks[target_stem])
                 outputs[complement].write(backing)
+            processed += block_len
+            if on_progress is not None and total_frames > 0:
+                pct = min(100, int(round(processed / total_frames * 100)))
+                if pct > last_percent:
+                    last_percent = pct
+                    on_progress(pct)
     return paths, {"frames": shape[0], "sample_rate": shape[1], "channels": shape[2],
                    "unscaled_peak": peak}
 
@@ -106,12 +116,29 @@ def decoded_peak(path: Path, ffmpeg: str, sample_rate: int, cancel_event=None) -
 
 def render_pair(stems: dict[str, str], workdir: Path, destinations: dict[str, Path],
                 fmt: str, ffmpeg: str, cancel_event=None, *,
-                target_stem: str = "drums") -> dict:
-    raw, info = mix_pair(stems, workdir, cancel_event, target_stem=target_stem)
+                target_stem: str = "drums", on_progress=None) -> dict:
+    last_percent = -1
+
+    def report(pct: int) -> None:
+        nonlocal last_percent
+        if on_progress is None:
+            return
+        clamped = max(1, min(99, int(pct)))
+        if clamped > last_percent:
+            last_percent = clamped
+            on_progress(clamped)
+
+    mix_weight = 60 if fmt == "wav" else 25
+    raw, info = mix_pair(
+        stems, workdir, cancel_event, target_stem=target_stem,
+        on_progress=(lambda pct: report(round(pct * mix_weight / 100))) if on_progress else None,
+    )
     ceiling = 10 ** (-1 / 20) if fmt == "mp3" else 0.999
     gain = min(1.0, ceiling / info["unscaled_peak"]) if info["unscaled_peak"] else 1.0
+    stem_count = max(1, len(raw))
+    encode_end = 99 if fmt == "wav" else 75
     for _attempt in range(3):
-        for name, source in raw.items():
+        for index, (name, source) in enumerate(raw.items(), 1):
             output = destinations[name]
             if fmt == "wav":
                 if gain == 1.0:
@@ -125,11 +152,17 @@ def render_pair(stems: dict[str, str], workdir: Path, destinations: dict[str, Pa
                     write_scaled(source, scaled_input, gain, cancel_event)
                 cmd = build_stem_encode_cmd(ffmpeg, str(scaled_input), str(output), fmt)
                 run(cmd, check=True, cancel_event=cancel_event)
+            report(round(mix_weight + (encode_end - mix_weight) * (index / stem_count)))
         if fmt == "wav":
             peak = info["unscaled_peak"] * gain
             break
-        peak = max(decoded_peak(path, ffmpeg, info["sample_rate"], cancel_event)
-                   for path in destinations.values())
+        peaks = []
+        dest_paths = list(destinations.values())
+        dest_count = max(1, len(dest_paths))
+        for index, path in enumerate(dest_paths, 1):
+            peaks.append(decoded_peak(path, ffmpeg, info["sample_rate"], cancel_event))
+            report(round(encode_end + (99 - encode_end) * (index / dest_count)))
+        peak = max(peaks)
         if peak <= ceiling * 1.00001:
             break
         gain *= ceiling / peak * 0.999

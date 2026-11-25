@@ -12,7 +12,7 @@ from urllib.request import url2pathname
 WATCH_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 STABLE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 LOCAL_AUDIO_EXTENSIONS = {
-    ".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".opus", ".wma", ".aiff", ".aif", ".alac",
+    ".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".opus", ".wma", ".aiff", ".aif", ".alac", ".webm",
 }
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
@@ -51,7 +51,10 @@ def extract_watch_id(input_text: str | None) -> str:
     text = input_text.strip()
     if is_valid_watch_id(text):
         return text
-    url = urlsplit(text if "://" in text else "https://" + text)
+    try:
+        url = urlsplit(text if "://" in text else "https://" + text)
+    except ValueError as exc:
+        raise InputError("No YouTube video id in source") from exc
     host = (url.hostname or "").lower()
     parts = url.path.strip("/").split("/")
     candidate = ""
@@ -68,7 +71,10 @@ def extract_watch_id(input_text: str | None) -> str:
 
 
 def _parse_file_uri(source: str) -> Path:
-    parsed = urlsplit(source)
+    try:
+        parsed = urlsplit(source)
+    except ValueError as exc:
+        raise InputError("Invalid file:// URI") from exc
     if parsed.netloc and parsed.netloc.lower() != "localhost":
         raise InputError("Remote file:// hosts are not supported")
     if parsed.query or parsed.fragment or not parsed.path:
@@ -96,15 +102,15 @@ def local_audio_path(input_text: str | None) -> Path | None:
         return _parse_file_uri(source)
     if "://" in source or is_valid_watch_id(source):
         return None
+    suffix = Path(source).suffix.lower()
+    if _is_explicit_local_path(source):
+        validate_local_audio_suffix(suffix, source)
+        return Path(source).expanduser().resolve()
     try:
         extract_watch_id(source)
         return None
     except InputError:
         pass
-    suffix = Path(source).suffix.lower()
-    if _is_explicit_local_path(source):
-        validate_local_audio_suffix(suffix, source)
-        return Path(source).expanduser().resolve()
     if suffix in LOCAL_AUDIO_EXTENSIONS and not source.lower().startswith("ytsearch") and "/" not in source:
         return Path(source).expanduser().resolve()
     return None
