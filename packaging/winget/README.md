@@ -22,5 +22,5 @@ These templates are used by [`.github/workflows/companions.yml`](../../.github/w
 
 [`.github/workflows/companions.yml`](../../.github/workflows/companions.yml) automatically runs `wingetcreate submit` on `v*` tags when `WINGET_TOKEN` is configured:
 
-1. Create a **classic** GitHub Personal Access Token with the `public_repo` scope (`wingetcreate` does not support fine-grained tokens).
+1. Create a **classic** GitHub Personal Access Token with the `public_repo` **and `workflow`** scopes (`wingetcreate` does not support fine-grained tokens, and GitHub requires `workflow` whenever upstream `microsoft/winget-pkgs` commits touch `.github/workflows/*` during fork sync).
 2. In `kurtisnotcurtis/jamly` **Settings → Secrets and variables → Actions → Secrets**, add it as `WINGET_TOKEN`.
