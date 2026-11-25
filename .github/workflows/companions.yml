@@ -377,8 +377,41 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $ver = $env:VERSION.TrimStart('v')
-          $wingetcreateUrl = "https://github.com/microsoft/winget-create/releases/download/v1.12.13.0/wingetcreate.exe"
-          $expectedSha256 = "24042bd37915805615e6cf969ac57c6439124c3fe85823327f5f3fb24bd9ffea"
+          $headers = @{
+            Authorization = "Bearer $env:WINGET_CREATE_GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+            "User-Agent" = "jamly-release"
+          }
+          $owner = (Invoke-RestMethod -Uri "https://api.github.com/user" -Headers $headers).login
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+              $sync = Invoke-RestMethod -Method Post `
+                -Uri "https://api.github.com/repos/$owner/winget-pkgs/merge-upstream" `
+                -Headers $headers `
+                -ContentType "application/json" `
+                -Body '{"branch":"master"}'
+              Write-Host "Fork sync ($owner/winget-pkgs): $($sync.message)"
+              break
+            } catch {
+              $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+              $detail = if ($_.ErrorDetails) { $_.ErrorDetails.Message } else { $_.Exception.Message }
+              if ($status -eq 404) {
+                Write-Host "No existing $owner/winget-pkgs fork; letting wingetcreate create one."
+                break
+              }
+              if (($status -eq 403 -or $status -eq 422) -and $detail -match 'workflow') {
+                throw "Failed to sync $owner/winget-pkgs: upstream updated .github/workflows/* and WINGET_TOKEN lacks the 'workflow' scope. Add the 'workflow' scope to WINGET_TOKEN (or sync the fork manually and re-run)."
+              }
+              if ($attempt -eq 3 -or ($status -ge 400 -and $status -lt 500 -and $status -ne 409 -and $status -ne 429)) {
+                throw "Failed to sync $owner/winget-pkgs (HTTP $status): $detail"
+              }
+              Write-Warning "Fork sync attempt $attempt failed (HTTP $status); retrying..."
+              Start-Sleep -Seconds ($attempt * 5)
+            }
+          }
+          $wingetcreateUrl = "https://github.com/microsoft/winget-create/releases/download/v1.28.1.0/wingetcreate.exe"
+          $expectedSha256 = "63d980ba79e97042395bd6eb5992c2db9e01e9e7a8a22958a95c288f27310413"
           Invoke-WebRequest -Uri $wingetcreateUrl -OutFile "wingetcreate.exe"
           $actualSha256 = (Get-FileHash -Path "wingetcreate.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actualSha256 -ne $expectedSha256) {

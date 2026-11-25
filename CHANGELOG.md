@@ -6,6 +6,7 @@ All notable changes to Jamly are documented here. This project follows [Semantic
 
 ### Fixed
 - **Use absolute URLs for the logo and doc links in `README.md`.** Point the header logo to `https://kurtisnotcurtis.github.io/jamly/jamly-mark.svg` and relative doc links to GitHub blob URLs so the logo and links render properly on PyPI (`README.md`).
+- **Harden automated WinGet fork sync and bump `wingetcreate.exe` to `v1.28.1.0`.** Pre-sync the `winget-pkgs` fork with retries on transient GitHub API failures and an actionable error if `WINGET_TOKEN` lacks the `workflow` scope, update `wingetcreate.exe` (`v1.28.1.0` with verified SHA-256), and document the required `workflow` scope (`.github/workflows/companions.yml`, `packaging/winget/README.md`).
 
 ## [0.5.0] - 2026-11-24
 
